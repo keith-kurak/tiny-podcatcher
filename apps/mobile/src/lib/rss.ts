@@ -54,9 +54,129 @@ export async function lookupAppleFeedUrl(showId: string): Promise<string> {
 
 // Accepts an RSS feed URL or an Apple Podcasts link and returns a feed URL.
 export async function resolveFeedUrl(input: string): Promise<string> {
-  const url = input.trim();
+  const url = withScheme(input.trim());
   const showId = parseApplePodcastsId(url);
   return showId ? lookupAppleFeedUrl(showId) : url;
+}
+
+/**
+ * A hostname followed by a dotted TLD, optionally with a path.
+ *
+ * The `[a-z]{2,}` on the last label is what keeps a show called "99.9" out: it has a
+ * dot, but "9" is not a TLD. Requiring two letters costs nothing real — no podcast feed
+ * lives on a single-letter TLD.
+ */
+const BARE_DOMAIN = /^[\w-]+(\.[\w-]+)*\.[a-z]{2,}(\/|$)/i;
+
+/**
+ * Decide whether typed text is a feed address rather than something to search for.
+ *
+ * This is the whole basis of the single input on the add screen, so it errs toward
+ * "search": a wrong guess here sends a real URL to the search API and finds nothing,
+ * which looks broken, whereas searching for something URL-shaped just returns nothing
+ * and the user adds a scheme.
+ *
+ * Any whitespace means a search — podcast names have spaces and URLs do not.
+ */
+export function looksLikeFeedUrl(input: string): boolean {
+  const s = input.trim();
+  if (!s || /\s/.test(s)) return false;
+  if (/^https?:\/\//i.test(s)) return true;
+  return BARE_DOMAIN.test(s);
+}
+
+/** `feeds.npr.org/…` is a URL a person would type; `fetch` needs the scheme spelled out. */
+function withScheme(url: string): string {
+  return /^https?:\/\//i.test(url) || !url ? url : `https://${url}`;
+}
+
+/**
+ * The id `fetchFeed` will give a podcast at this URL.
+ *
+ * Exported so the search list can mark shows that are already subscribed without
+ * fetching every feed first. Subscription ids are hashes of the feed URL, and the URL
+ * hashed is the one handed to `fetchFeed` — the same one iTunes reports — so the two
+ * agree.
+ */
+export function feedIdForUrl(url: string): string {
+  return hashFeedUrl(url);
+}
+
+/** One show from the iTunes Search API, trimmed to the fields the add screen renders. */
+export interface PodcastSearchResult {
+  /** iTunes `collectionId`. Stable, and unique per show, so it keys the list. */
+  id: string;
+  title: string;
+  author?: string;
+  feedUrl: string;
+  artworkUrl?: string;
+  episodeCount?: number;
+}
+
+/** Enough to scroll through, and small enough to stay a ~40 KB response. */
+const SEARCH_LIMIT = 25;
+
+/**
+ * Search Apple's podcast directory by name.
+ *
+ * Called straight from the device rather than through a proxy of ours. The API is
+ * public and keyless, it sends `Access-Control-Allow-Origin: *` so the web build works
+ * too, and its rate limit is per-IP — which a proxy would turn into one shared budget
+ * for every user of the app, and one shared failure. Sending [HTTP_HEADERS] keeps the
+ * calls attributable to this app rather than to an anonymous OkHttp default.
+ *
+ * @param signal from React Query, so typing another character abandons the request in
+ * flight instead of racing it.
+ */
+export async function searchPodcasts(
+  term: string,
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<PodcastSearchResult[]> {
+  const q = term.trim();
+  if (!q) return [];
+
+  const res = await fetch(
+    'https://itunes.apple.com/search' +
+      `?media=podcast&entity=podcast&limit=${SEARCH_LIMIT}` +
+      `&term=${encodeURIComponent(q)}`,
+    { headers: HTTP_HEADERS, signal },
+  );
+
+  // Worth its own message: it is the one failure the user fixes by waiting rather than
+  // by typing something different.
+  if (res.status === 429) {
+    throw new Error('Too many searches at once. Try again in a moment.');
+  }
+  if (!res.ok) throw new Error(`Podcast search failed: ${res.status}`);
+
+  // Apple serves this as `text/javascript`; `json()` parses on content, not on the
+  // declared type, so it reads fine.
+  const data = await res.json();
+  const raw: any[] = Array.isArray(data?.results) ? data.results : [];
+
+  const seen = new Set<string>();
+  const results: PodcastSearchResult[] = [];
+
+  for (const r of raw) {
+    const feedUrl = typeof r?.feedUrl === 'string' ? r.feedUrl : '';
+    // A directory entry with no feed cannot be subscribed to, so it is not a result.
+    // Apple returns these for shows it has delisted.
+    if (!feedUrl || seen.has(feedUrl)) continue;
+    seen.add(feedUrl);
+
+    results.push({
+      id: String(r.collectionId ?? feedUrl),
+      title: String(r.collectionName ?? r.trackName ?? 'Untitled'),
+      author: r.artistName ? String(r.artistName) : undefined,
+      feedUrl,
+      // 100px for a list row. `artworkUrl600` is the same image four times the bytes,
+      // and the confirm card takes its artwork from the feed anyway.
+      artworkUrl: r.artworkUrl100 ?? r.artworkUrl600 ?? r.artworkUrl60 ?? undefined,
+      episodeCount: Number.isFinite(r.trackCount) ? Number(r.trackCount) : undefined,
+    });
+  }
+
+  return results;
 }
 
 export async function fetchFeed(

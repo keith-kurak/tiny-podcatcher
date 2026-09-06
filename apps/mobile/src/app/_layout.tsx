@@ -8,6 +8,7 @@ import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AppOnboarding } from '@/components/onboarding';
+import { useAutoUpdate } from '@/hooks/use-auto-update';
 import { getConnectedNodes } from '@/hooks/useWearDataLayer';
 import { AudioProvider } from '@/lib/audio-context';
 import { DownloadProvider } from '@/lib/download-context';
@@ -42,6 +43,10 @@ function RootLayout() {
     setOnboardingSeen();
     setShowOnboarding(false);
   };
+
+  // App-wide rather than in the Settings footer that shows the result: an app resumed
+  // for days on end should still pick up updates, whether or not anyone opens Settings.
+  useAutoUpdate();
 
   useEffect(() => {
     logAppStarted();
@@ -81,6 +86,24 @@ function RootLayout() {
                 presentation: 'modal',
                 headerShown: true,
                 title: 'Add Podcast',
+              }}
+            />
+            {/*
+              Pushed on top of the add-podcast modal, and a sibling of it rather than a
+              screen nested inside it.
+
+              Nesting a second Stack inside the modal route also works and arguably reads
+              better in the file tree. Two flat screens win on the dismiss: subscribing
+              has to close the modal *and* the search screen under it, and `router.dismiss`
+              counts within the nearest stack — from a nested stack it pops to the search
+              screen and stops, needing the parent navigator to finish the job. Here both
+              screens are in the same stack, so `dismiss(2)` says exactly what it does.
+            */}
+            <Stack.Screen
+              name="podcast-preview"
+              options={{
+                headerShown: true,
+                title: 'Podcast',
               }}
             />
           </Stack>

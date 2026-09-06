@@ -19,6 +19,7 @@ import { MaterialSwitch } from '@/components/material-switch';
 import { StorageLimitRow } from '@/components/storage-limit-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { VersionInfo } from '@/components/version-info';
 import { Colors, NowPlayingBarHeight, Spacing } from '@/constants/theme';
 import { useDownloadContext } from '@/lib/download-context';
 import { buildOpml, parseOpml } from '@/lib/opml';
@@ -318,6 +319,8 @@ export default function SettingsScreen() {
           pressedColor={colors.backgroundSelected}
           tintColor={colors.text}
         />
+
+        <VersionInfo />
       </ScrollView>
     </ThemedView>
   );

@@ -15,7 +15,7 @@ import { ThemedView } from '@/components/themed-view';
 import { WatchToggle } from '@/components/watch-toggle';
 import { NowPlayingBarHeight, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { useAudio } from '@/lib/audio-context';
+import { SKIP_BACK_S, SKIP_FORWARD_S, useAudio } from '@/lib/audio-context';
 import { formatDate, formatDuration, parseDurationToSeconds, stripHtml } from '@/lib/format';
 import { useIsInDownloads } from '@/lib/queries';
 import { getCachedEpisodes, getPlaybackProgress, getSubscriptions } from '@/lib/storage';
@@ -42,7 +42,17 @@ export function EpisodeDetail({ episodeId, podcastId }: EpisodeDetailProps) {
   const podcast: Podcast | undefined = getSubscriptions().find((s) => s.id === podcastId);
   const episodes = getCachedEpisodes(podcastId) ?? [];
   const episode: Episode | undefined = episodes.find((e) => e.guid === episodeId);
-  const { player, currentEpisode, play, pause, resume, playbackRate, setPlaybackRate } = useAudio();
+  const {
+    player,
+    currentEpisode,
+    play,
+    pause,
+    resume,
+    playbackRate,
+    setPlaybackRate,
+    skipBack,
+    skipForward,
+  } = useAudio();
   const status = useAudioPlayerStatus(player);
   const theme = useTheme();
   const { data: downloadItem } = useIsInDownloads(episodeId);
@@ -117,6 +127,8 @@ export function EpisodeDetail({ episodeId, podcastId }: EpisodeDetailProps) {
             onSeek={async (seconds) => {
               if (isThisEpisode) await player.seekTo(seconds);
             }}
+            onSkipBack={skipBack}
+            onSkipForward={skipForward}
             playbackRate={playbackRate}
             onPlaybackRateChange={setPlaybackRate}
             theme={theme}
@@ -138,12 +150,59 @@ function formatRate(rate: number): string {
   return rate % 1 === 0 ? `${rate}x` : `${rate.toFixed(1)}x`;
 }
 
+/**
+ * A skip button whose icon states its own distance.
+ *
+ * The glyph carries the number, so the button says what it does without a label. These
+ * are the 10s pair and they are tied to `SKIP_BACK_S` / `SKIP_FORWARD_S` by hand —
+ * changing a constant means changing its icon here too, or the button lies.
+ */
+function SkipButton({
+  seconds,
+  direction,
+  onPress,
+  disabled,
+  theme,
+}: {
+  seconds: number;
+  direction: 'back' | 'forward';
+  onPress: () => void;
+  disabled?: boolean;
+  theme: ReturnType<typeof useTheme>;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.skipButton, disabled && styles.controlDisabled]}
+      hitSlop={8}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={
+        direction === 'back' ? `Skip back ${seconds} seconds` : `Skip forward ${seconds} seconds`
+      }>
+      <View pointerEvents="none">
+        <SymbolView
+          name={
+            direction === 'back'
+              ? { ios: 'gobackward.10', android: 'replay_10' }
+              : { ios: 'goforward.10', android: 'forward_10' }
+          }
+          size={26}
+          tintColor={theme.text}
+        />
+      </View>
+    </Pressable>
+  );
+}
+
 function PlaybackControls({
   isPlaying,
   currentTime,
   duration,
   onPlayPause,
   onSeek,
+  onSkipBack,
+  onSkipForward,
   playbackRate,
   onPlaybackRateChange,
   theme,
@@ -154,6 +213,8 @@ function PlaybackControls({
   duration: number;
   onPlayPause: () => void;
   onSeek: (seconds: number) => Promise<void>;
+  onSkipBack: () => Promise<void>;
+  onSkipForward: () => Promise<void>;
   playbackRate: number;
   onPlaybackRateChange: (rate: number) => void;
   theme: ReturnType<typeof useTheme>;
@@ -175,20 +236,6 @@ function PlaybackControls({
 
   return (
     <View style={styles.controls}>
-      <Pressable onPress={onPlayPause} style={[styles.playButton, disabled && { opacity: 0.4 }]} hitSlop={8} disabled={disabled}>
-        <View pointerEvents="none">
-          <SymbolView
-            name={
-              isPlaying
-                ? { ios: 'pause.fill', android: 'pause' }
-                : { ios: 'play.fill', android: 'play_arrow' }
-            }
-            size={28}
-            tintColor={theme.text}
-          />
-        </View>
-      </Pressable>
-
       {duration > 0 && (
         <View style={styles.progressContainer}>
           <Host style={styles.sliderRow} useViewportSizeMeasurement>
@@ -227,9 +274,55 @@ function PlaybackControls({
         </View>
       )}
 
-      <Pressable onPress={handleSpeedPress} style={styles.speedButton} hitSlop={8}>
-        <ThemedText style={styles.speedButtonText}>{formatRate(playbackRate)}</ThemedText>
-      </Pressable>
+      {/*
+        Transport sits below the scrubber rather than beside it. Five controls in one row
+        left the slider about a third of the screen, and a scrubber you cannot land on
+        accurately is worse than a taller player.
+      */}
+      <View style={styles.transportRow}>
+        <SkipButton
+          seconds={SKIP_BACK_S}
+          direction="back"
+          onPress={onSkipBack}
+          disabled={disabled}
+          theme={theme}
+        />
+
+        <Pressable
+          onPress={onPlayPause}
+          style={[styles.playButton, disabled && styles.controlDisabled]}
+          hitSlop={8}
+          disabled={disabled}>
+          <View pointerEvents="none">
+            <SymbolView
+              name={
+                isPlaying
+                  ? { ios: 'pause.fill', android: 'pause' }
+                  : { ios: 'play.fill', android: 'play_arrow' }
+              }
+              size={28}
+              tintColor={theme.text}
+            />
+          </View>
+        </Pressable>
+
+        <SkipButton
+          seconds={SKIP_FORWARD_S}
+          direction="forward"
+          onPress={onSkipForward}
+          disabled={disabled}
+          theme={theme}
+        />
+
+        {/*
+          Absolute so the three transport buttons stay centred on the screen rather than
+          on whatever is left after the speed label — which changes width between "1x"
+          and "1.5x", and would shift the play button as the rate changed.
+        */}
+        <Pressable onPress={handleSpeedPress} style={styles.speedButton} hitSlop={8}>
+          <ThemedText style={styles.speedButtonText}>{formatRate(playbackRate)}</ThemedText>
+        </Pressable>
+      </View>
 
       {sheetOpen && (
         <BottomSheetComponent
@@ -302,13 +395,13 @@ const styles = StyleSheet.create({
     marginTop: Spacing.six,
   },
   controls: {
+    gap: Spacing.two,
+  },
+  transportRow: {
     flexDirection: 'row',
-    // Top-aligned, not centered: the progress column is taller than the buttons
-    // because of the time row below it. Centering the column would push the
-    // slider above the buttons. Each child is SliderRowHeight tall instead, so
-    // all three centre lines land together on the slider.
-    alignItems: 'flex-start',
-    gap: Spacing.three,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.four,
   },
   playButton: {
     width: 48,
@@ -316,7 +409,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  skipButton: {
+    width: 44,
+    height: SliderRowHeight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  controlDisabled: {
+    opacity: 0.4,
+  },
   speedButton: {
+    position: 'absolute',
+    right: 0,
     paddingHorizontal: 8,
     height: SliderRowHeight,
     justifyContent: 'center',
