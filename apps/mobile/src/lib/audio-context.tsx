@@ -38,6 +38,26 @@ const isAndroid = Platform.OS === 'android';
  */
 const UNCHANGED_POSITION_S = 1;
 
+/**
+ * Skip distances for the phone. Ten seconds each way.
+ *
+ * The watch is 10/30 — asymmetric, because forward is for clearing an ad break and back
+ * is for catching a sentence. The phone cannot match it: its notification controls come
+ * from expo-audio, whose `SEEK_INTERVAL_MS` is one private constant used for both
+ * directions and is not reachable from JS or the config plugin. Rather than have the
+ * in-app button skip 30s while the notification beside it skips 10, both surfaces here
+ * agree at 10 and the phone simply differs from the watch.
+ *
+ * Revisit if expo-audio ever makes the interval configurable; 10/30 is the shape we
+ * actually want.
+ *
+ * Two things depend on each number: the seek itself, and the icon drawn beside it
+ * (`replay_10` / `forward_10`). Change one and its icon has to change with it, or the
+ * button lies about what it does.
+ */
+export const SKIP_BACK_S = 10;
+export const SKIP_FORWARD_S = 10;
+
 interface NowPlaying {
   episode: Episode;
   podcast: Podcast;
@@ -52,6 +72,8 @@ interface AudioContextValue {
   pause: () => void;
   resume: () => void;
   seekTo: (seconds: number) => Promise<void>;
+  skipBack: () => Promise<void>;
+  skipForward: () => Promise<void>;
   setPlaybackRate: (rate: number) => void;
 }
 
@@ -206,11 +228,19 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
         await requestNotificationPermissionsAsync();
       }
       try {
-        player.setActiveForLockScreen(true, {
-          title: episode.title,
-          artist: podcast.author ?? podcast.title,
-          artworkUrl: episode.imageUrl ?? podcast.artworkUrl,
-        });
+        player.setActiveForLockScreen(
+          true,
+          {
+            title: episode.title,
+            artist: podcast.author ?? podcast.title,
+            artworkUrl: episode.imageUrl ?? podcast.artworkUrl,
+          },
+          // Skip buttons either side of play/pause in the notification and on the lock
+          // screen. expo-audio draws them at 10s in both directions, which is why
+          // SKIP_BACK_S and SKIP_FORWARD_S are both 10 — the in-app buttons and these
+          // have to agree.
+          { showSeekBackward: true, showSeekForward: true },
+        );
       } catch {
         // Lock screen controls may fail on dev builds; non-critical
       }
@@ -253,6 +283,14 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
         player.play();
       },
       seekTo: (seconds: number) => player.seekTo(seconds),
+      skipBack: () => player.seekTo(Math.max(0, player.currentTime - SKIP_BACK_S)),
+      skipForward: () => {
+        // `duration` is 0 until the source has loaded, which would clamp every skip to
+        // the start. Until it is known, let the seek run unclamped — the player stops at
+        // the end on its own.
+        const target = player.currentTime + SKIP_FORWARD_S;
+        return player.seekTo(player.duration > 0 ? Math.min(target, player.duration) : target);
+      },
     }),
     [player, nowPlaying, playbackRate, play, saveProgress, clearPlayRetry],
   );
