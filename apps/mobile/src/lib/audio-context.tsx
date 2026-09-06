@@ -122,10 +122,21 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
    * @param final the position just stopped moving — a pause, or switching episode. The
    * watch gets it straight away instead of waiting out the publish throttle.
    */
+  /**
+   * True from the moment an episode finishes until something plays again.
+   *
+   * While it is set the player is parked at 0 by the rewind below, and a periodic save
+   * would write that 0 over the end-of-episode position saved a moment earlier — which
+   * is what marks the episode played. Cleared on the next `playing` status rather than
+   * after one skipped save, since more than one update can arrive while parked.
+   */
+  const justFinishedRef = useRef(false);
+
   const saveProgress = useCallback(
     ({ final = false } = {}) => {
       const ep = nowPlayingRef.current?.episode;
       if (!ep || !player) return;
+      if (justFinishedRef.current) return;
       const pos = player.currentTime;
       const dur = player.duration;
       if (dur <= 0) return;
@@ -252,7 +263,29 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   const progressSaveRef = useRef(0);
   useEffect(() => {
     const sub = player.addListener('playbackStatusUpdate', (status) => {
-      if (status.playing) clearPlayRetry();
+      if (status.playing) {
+        clearPlayRetry();
+        justFinishedRef.current = false;
+      }
+
+      if (status.didJustFinish) {
+        // Record the finish at the end position *before* moving anything: an episode
+        // counts as played by its stored position reaching the end, so rewinding first
+        // would file a finished episode as never started.
+        saveProgress({ final: true });
+
+        // Then leave the ended state, because the player does not emit status updates
+        // while it sits there. Nothing is actually broken underneath — seeking and
+        // scrubbing keep working, verified on device — but every screen bound to
+        // `useAudioPlayerStatus` freezes on the last value it received, so the transport
+        // looks dead. Seeking is what restarts the updates, and parking at 0 leaves the
+        // episode ready to play again from the top.
+        justFinishedRef.current = true;
+        player.pause();
+        player.seekTo(0);
+        return;
+      }
+
       // Save progress every ~5 seconds (updateInterval is 500ms, so every 10 updates)
       progressSaveRef.current++;
       if (progressSaveRef.current >= 10) {
