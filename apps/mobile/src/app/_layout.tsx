@@ -83,6 +83,24 @@ function RootLayout() {
                 title: 'Add Podcast',
               }}
             />
+            {/*
+              Pushed on top of the add-podcast modal, and a sibling of it rather than a
+              screen nested inside it.
+
+              Nesting a second Stack inside the modal route also works and arguably reads
+              better in the file tree. Two flat screens win on the dismiss: subscribing
+              has to close the modal *and* the search screen under it, and `router.dismiss`
+              counts within the nearest stack — from a nested stack it pops to the search
+              screen and stops, needing the parent navigator to finish the job. Here both
+              screens are in the same stack, so `dismiss(2)` says exactly what it does.
+            */}
+            <Stack.Screen
+              name="podcast-preview"
+              options={{
+                headerShown: true,
+                title: 'Podcast',
+              }}
+            />
           </Stack>
         </ThemeProvider>
       </AudioProvider>
