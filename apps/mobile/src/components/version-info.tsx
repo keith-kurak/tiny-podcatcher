@@ -1,47 +1,28 @@
 import { useMaterialColors } from '@expo/ui/jetpack-compose';
 import Constants from 'expo-constants';
-import { SymbolView } from 'expo-symbols';
 import * as Updates from 'expo-updates';
-import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, useColorScheme, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Colors, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 
 /**
- * Version and over-the-air update state, for the bottom of Settings.
+ * Version and over-the-air update state — a footer for the bottom of Settings.
  *
- * Three things, in the order someone asks them: what am I running, when was it built, and
- * is there anything newer. The last one is a single button that changes what it offers
- * rather than three buttons that are mostly disabled — checking, downloading and
- * restarting are steps of one action, never a choice between them.
+ * Deliberately quiet: centred, small, secondary text, no card. Nobody comes to Settings
+ * to read a version number; it is here for the moment someone is asked for it, so it
+ * should be findable without competing with the rows above.
  *
- * Everything here is inert in development. `expo-updates` is disabled when the bundle
- * comes from Metro, so `createdAt` is undefined and `checkForUpdateAsync` throws; the
- * component says so plainly instead of offering a button that cannot work.
+ * Finding and downloading updates is not this screen's job — `useAutoUpdate` does both
+ * in the background. What is left is the one step that genuinely needs a person, because
+ * it interrupts them: restarting into an update that is already downloaded and waiting.
+ * So there is no button here at all until there is something to restart into.
  */
 export function VersionInfo() {
-  const scheme = useColorScheme();
-  const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
   const material = useMaterialColors();
 
-  const {
-    currentlyRunning,
-    isUpdateAvailable,
-    isUpdatePending,
-    isChecking,
-    isDownloading,
-    downloadProgress,
-    checkError,
-    downloadError,
-  } = Updates.useUpdates();
-
-  /**
-   * Set only by a check that came back empty. The hook cannot express "asked, and there
-   * was nothing" — `isUpdateAvailable` is false both before and after such a check — and
-   * a button that does nothing visible reads as broken.
-   */
-  const [upToDate, setUpToDate] = useState(false);
+  const { currentlyRunning, isUpdatePending, isDownloading, downloadProgress } =
+    Updates.useUpdates();
 
   /**
    * Safe to read as *the* app version because `runtimeVersion.policy` is `appVersion`:
@@ -53,140 +34,57 @@ export function VersionInfo() {
   const version = Constants.expoConfig?.version ?? '—';
   const { createdAt, isEmbeddedLaunch } = currentlyRunning;
 
+  const updatesActive = Updates.isEnabled && !__DEV__;
+
   /**
-   * `Updates.isEnabled` is true in a development build — the native module is configured
-   * even though the bundle is coming from Metro — so it cannot stand alone here.
-   * Checking for an update in that state throws, so the button must not be offered.
+   * A second line only when it tells the reader something.
+   *
+   * An embedded launch gets nothing: its date is just the build's own, which the version
+   * number above already stands for, and "Built in 3 Mar" invites the reader to wonder
+   * what it means. A date is news only when it belongs to an update that arrived after
+   * the install — so the line appears exactly when one has.
    */
-  const canCheckForUpdates = Updates.isEnabled && !__DEV__;
-
-  async function handleCheck() {
-    setUpToDate(false);
-    try {
-      const result = await Updates.checkForUpdateAsync();
-      if (!result.isAvailable) setUpToDate(true);
-    } catch {
-      // Surfaced through the hook's checkError, which has the message.
-    }
-  }
-
-  async function handleDownload() {
-    try {
-      await Updates.fetchUpdateAsync();
-    } catch {
-      // Surfaced through the hook's downloadError.
-    }
-  }
-
-  const errorMessage = checkError?.message ?? downloadError?.message;
+  const statusLine = !updatesActive
+    ? 'Running from the development server.'
+    : !isEmbeddedLaunch && createdAt
+      ? `Updated ${formatManifestDate(createdAt)}`
+      : null;
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.backgroundElement }]}>
-      <View style={styles.header}>
-        <View style={styles.icon}>
-          <SymbolView
-            name={{ ios: 'info.circle', android: 'info' }}
-            size={24}
-            tintColor={colors.text}
-          />
-        </View>
-        <View style={styles.headerText}>
-          <ThemedText style={styles.title}>Version {version}</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            {!canCheckForUpdates
-              ? 'Running from the development server.'
-              : createdAt
-                ? `${isEmbeddedLaunch ? 'Built in' : 'Updated'} ${formatManifestDate(createdAt)}`
-                : 'No update information available.'}
+    <View style={styles.container}>
+      <ThemedText type="small" themeColor="textSecondary">
+        Version {version}
+      </ThemedText>
+
+      {statusLine && (
+        <ThemedText type="small" themeColor="textSecondary">
+          {statusLine}
+        </ThemedText>
+      )}
+
+      {updatesActive && isUpdatePending && (
+        // Staged already, and it applies on the next launch either way. This is an offer
+        // to have it now, not a step that must be completed.
+        <Pressable
+          onPress={() => Updates.reloadAsync()}
+          accessibilityRole="button"
+          accessibilityLabel="Restart to update"
+          style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
+          <ThemedText type="small" style={[styles.buttonLabel, { color: material.primary }]}>
+            Restart to update
           </ThemedText>
-        </View>
-      </View>
+        </Pressable>
+      )}
 
-      {canCheckForUpdates && (
-        <View style={styles.actions}>
-          {isUpdatePending ? (
-            // Downloaded and staged. It applies on the next launch either way, so this
-            // button is an offer to have it now, not a step the user must complete.
-            <ActionButton
-              label="Restart to update"
-              filled
-              onPress={() => Updates.reloadAsync()}
-              material={material}
-            />
-          ) : isUpdateAvailable ? (
-            <ActionButton
-              label={
-                isDownloading
-                  ? downloadProgress != null
-                    ? `Downloading ${Math.round(downloadProgress * 100)}%`
-                    : 'Downloading…'
-                  : 'Download update'
-              }
-              filled
-              busy={isDownloading}
-              onPress={handleDownload}
-              material={material}
-            />
-          ) : (
-            <ActionButton
-              label={isChecking ? 'Checking…' : 'Check for updates'}
-              busy={isChecking}
-              onPress={handleCheck}
-              material={material}
-            />
-          )}
-
-          {upToDate && !isUpdateAvailable && !isChecking && (
-            <ThemedText type="small" themeColor="textSecondary">
-              You’re up to date.
-            </ThemedText>
-          )}
-
-          {errorMessage && (
-            <ThemedText type="small" style={{ color: material.error }}>
-              {errorMessage}
-            </ThemedText>
-          )}
-        </View>
+      {updatesActive && !isUpdatePending && isDownloading && (
+        // Not a control — just an explanation for the button that is about to appear.
+        <ThemedText type="small" themeColor="textSecondary">
+          {downloadProgress != null
+            ? `Downloading update… ${Math.round(downloadProgress * 100)}%`
+            : 'Downloading update…'}
+        </ThemedText>
       )}
     </View>
-  );
-}
-
-function ActionButton({
-  label,
-  onPress,
-  material,
-  filled = false,
-  busy = false,
-}: {
-  label: string;
-  onPress: () => void;
-  material: ReturnType<typeof useMaterialColors>;
-  filled?: boolean;
-  busy?: boolean;
-}) {
-  const textColor = filled ? material.onPrimary : material.primary;
-
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={busy}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => [
-        styles.button,
-        filled
-          ? { backgroundColor: material.primary }
-          : { borderWidth: 1, borderColor: material.outline },
-        busy && styles.buttonBusy,
-        pressed && styles.pressed,
-      ]}>
-      {busy && <ActivityIndicator size="small" color={textColor} />}
-      <ThemedText type="small" style={[styles.buttonLabel, { color: textColor }]}>
-        {label}
-      </ThemedText>
-    </Pressable>
   );
 }
 
@@ -209,47 +107,19 @@ function formatManifestDate(date: Date): string {
 }
 
 const styles = StyleSheet.create({
-  card: {
-    padding: Spacing.three,
-    borderRadius: Spacing.two,
-    gap: Spacing.three,
-  },
-  header: {
-    flexDirection: 'row',
+  container: {
+    marginVertical: Spacing.four,
     alignItems: 'center',
-    gap: Spacing.three,
-  },
-  icon: {
-    width: 24,
-    alignItems: 'center',
-  },
-  headerText: {
-    flex: 1,
-    gap: 2,
-  },
-  title: {
-    fontWeight: '600',
-  },
-  actions: {
-    // Indented to the text column, so the button reads as belonging to the version above
-    // it rather than to the card's edge.
-    paddingLeft: Spacing.three + 24,
-    gap: Spacing.two,
-    alignItems: 'flex-start',
+    // Tight enough that the version and its status read as one block.
+    gap: Spacing.one,
   },
   button: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-    height: 36,
-    paddingHorizontal: Spacing.three,
-    borderRadius: 18,
+    height: 32,
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.two,
   },
   buttonLabel: {
     fontWeight: '600',
-  },
-  buttonBusy: {
-    opacity: 0.7,
   },
   pressed: {
     opacity: 0.85,

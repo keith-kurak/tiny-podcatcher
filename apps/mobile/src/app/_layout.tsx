@@ -8,6 +8,7 @@ import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AppOnboarding } from '@/components/onboarding';
+import { useAutoUpdate } from '@/hooks/use-auto-update';
 import { getConnectedNodes } from '@/hooks/useWearDataLayer';
 import { AudioProvider } from '@/lib/audio-context';
 import { DownloadProvider } from '@/lib/download-context';
@@ -42,6 +43,10 @@ function RootLayout() {
     setOnboardingSeen();
     setShowOnboarding(false);
   };
+
+  // App-wide rather than in the Settings footer that shows the result: an app resumed
+  // for days on end should still pick up updates, whether or not anyone opens Settings.
+  useAutoUpdate();
 
   useEffect(() => {
     logAppStarted();

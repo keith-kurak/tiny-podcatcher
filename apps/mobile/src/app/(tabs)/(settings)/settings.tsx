@@ -320,13 +320,6 @@ export default function SettingsScreen() {
           tintColor={colors.text}
         />
 
-        <ThemedText
-          type="smallBold"
-          themeColor="textSecondary"
-          style={[styles.sectionTitle, styles.sectionSpacing]}>
-          ABOUT
-        </ThemedText>
-
         <VersionInfo />
       </ScrollView>
     </ThemedView>
