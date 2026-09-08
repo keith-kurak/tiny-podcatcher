@@ -5,7 +5,7 @@
   "scripts": {
     "install-debug": "./install.sh",
     "build-apk": "EAS_DANGEROUS_OVERRIDE_ANDROID_APPLICATION_ID=com.keithkurak.tinypodcatcher eas build --profile preview-watch --platform android",
-    "build-aab": "EAS_DANGEROUS_OVERRIDE_ANDROID_APPLICATION_ID=com.keithkurak.tinypodcatcher eas build --profile production-watch --platform android"
+    "build-aab": "EAS_DANGEROUS_OVERRIDE_ANDROID_APPLICATION_ID=com.keithkurak.tinypodcatcher eas build --profile production-watch --platform android --auto-submit"
   },
   "dependencies": {
     "expo": "^57.0.7"

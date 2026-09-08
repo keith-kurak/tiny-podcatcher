@@ -53,7 +53,7 @@
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android --device Pixel_9a",
     "build-apk": "eas build --profile preview --platform android",
-    "build-aab": "eas build --profile production --platform android",
+    "build-aab": "eas build --profile production --platform android --auto-submit",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint"

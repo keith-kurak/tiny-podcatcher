@@ -14,5 +14,12 @@
         "config": "watch-production.yml"
       }
     }
+  },
+  "submit": {
+    "production-watch": {
+      "android": {
+        "track": "wear:internal"
+      }
+    }
   }
 }
