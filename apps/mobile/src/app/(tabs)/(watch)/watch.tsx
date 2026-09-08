@@ -2,15 +2,18 @@ import { LegendList, type LegendListRef } from '@legendapp/list/react-native';
 import { ObserveInteractiveMarker } from 'expo-observe';
 import { SymbolView } from 'expo-symbols';
 import { Stack, useRouter } from 'expo-router';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, View } from 'react-native';
 
 import { Image } from '@/components/image';
-import { RetryDialog } from '@/components/retry-dialog';
+import { RemoveDialog } from '@/components/remove-dialog';
+import { SelectionCheck, useSelectedRowStyle } from '@/components/selectable';
+import { SelectionActionBar } from '@/components/selection-action-bar';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { NowPlayingBarHeight, Spacing } from '@/constants/theme';
 import { useScrollToActiveDownload } from '@/hooks/use-scroll-to-active-download';
+import { useSelectionMode } from '@/hooks/use-selection-mode';
 import { useStatusColors } from '@/hooks/use-status-colors';
 import { useTheme } from '@/hooks/use-theme';
 import { formatBytes, formatDate, formatDuration } from '@/lib/format';
@@ -32,14 +35,21 @@ const ESTIMATED_ROW_HEIGHT = 76;
 const WatchRow = memo(function WatchRow({
   item,
   watchStatus,
-  onLongPress,
+  selecting,
+  selected,
+  onToggle,
+  onStartSelection,
 }: {
   item: EnrichedDownloadItem;
   watchStatus: WatchEpisodeStatus | undefined;
-  onLongPress: () => void;
+  selecting: boolean;
+  selected: boolean;
+  onToggle: () => void;
+  onStartSelection: () => void;
 }) {
   const router = useRouter();
   const statusColors = useStatusColors();
+  const selectedStyle = useSelectedRowStyle(selected);
   const status = watchStatus?.status ?? 'pending';
   const progress = watchStatus?.progress ?? 0;
   // What the watch measured beats what the feed claimed. Falls back to the feed size
@@ -52,15 +62,22 @@ const WatchRow = memo(function WatchRow({
 
   return (
     <Pressable
-      style={styles.episodeRow}
-      onLongPress={onLongPress}
-      onPress={() =>
+      style={[styles.episodeRow, selectedStyle]}
+      onLongPress={onStartSelection}
+      accessibilityRole="button"
+      accessibilityState={selecting ? { selected } : undefined}
+      onPress={() => {
+        if (selecting) {
+          onToggle();
+          return;
+        }
         router.push({
           pathname: '/(tabs)/(watch)/episode/[episodeId]',
           params: { episodeId: item.episodeGuid, podcastId: item.podcastId },
-        })
-      }
+        });
+      }}
     >
+      {selecting && <SelectionCheck selected={selected} />}
       <Image
         source={{ uri: item.episode.imageUrl ?? item.podcast?.artworkUrl }}
         style={styles.thumbnail}
@@ -134,39 +151,49 @@ const WatchRow = memo(function WatchRow({
 });
 
 export default function WatchScreen() {
-  const router = useRouter();
   const theme = useTheme();
   const statusColors = useStatusColors();
   const watchStatuses = useWatchStatuses();
   const { data: watchList = [], isLoading, refetch, isRefetching } = useWatchListQuery();
-  const { triggerSync } = useWatchListMutations();
+  const { triggerSync, removeMany } = useWatchListMutations();
   const [connected, setConnected] = useState<boolean | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  // A snapshot, not a guid to re-look-up. Retrying flips the status immediately, and a
-  // lookup would go undefined underneath the dialog as it animates out.
-  const [retryItem, setRetryItem] = useState<EnrichedDownloadItem | null>(null);
-  const [retryVisible, setRetryVisible] = useState(false);
 
-  const handleLongPress = useCallback(
-    (item: EnrichedDownloadItem) => {
-      // Only a failed download has anything to offer here. Opening an empty menu on a
-      // healthy episode would be a dead end.
-      if (watchStatuses.get(item.episodeGuid)?.status !== 'error') return;
-      setRetryItem(item);
-      setRetryVisible(true);
-    },
-    [watchStatuses],
+  const guids = useMemo(() => watchList.map((w) => w.episodeGuid), [watchList]);
+  const selection = useSelectionMode(guids);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+
+  /**
+   * Retry only when every selected episode failed.
+   *
+   * Long-press used to open a retry dialog, which is the gesture selection now owns, so
+   * retry moved into the action bar. Gating on "all errored" keeps it honest: an action
+   * that silently skipped the healthy half of a mixed selection would be worse than one
+   * that is simply absent.
+   */
+  const allErrored =
+    selection.count > 0 &&
+    selection.ids().every((guid) => watchStatuses.get(guid)?.status === 'error');
+
+  const handleRetrySelected = useCallback(() => {
+    for (const guid of selection.ids()) retryWatchEpisode(guid).catch(() => {});
+    // The watch reports its own status back, which is what actually updates the rows.
+    // Nothing optimistic here: if a message is lost the row must keep saying Error.
+    selection.exit();
+  }, [selection]);
+
+  function handleRemoveSelected() {
+    removeMany.mutate({ episodeGuids: selection.ids() });
+    setConfirmRemove(false);
+    selection.exit();
+  }
+
+  // Both drive row appearance, and the list recycles rows — a single value would leave
+  // the other one's changes invisible.
+  const listExtraData = useMemo(
+    () => ({ statuses: watchStatuses, selected: selection.extraData }),
+    [watchStatuses, selection.extraData],
   );
-
-  const confirmRetry = useCallback(() => {
-    const guid = retryItem?.episodeGuid;
-    if (guid) {
-      retryWatchEpisode(guid).catch(() => {});
-      // The watch reports its own status back, which is what actually updates the row.
-      // Nothing optimistic here: if the message is lost the row must keep saying Error.
-    }
-    setRetryVisible(false);
-  }, [retryItem]);
 
   const listRef = useRef<LegendListRef>(null);
   const hasActiveDownload = watchList.some(
@@ -175,10 +202,11 @@ export default function WatchScreen() {
   useScrollToActiveDownload(listRef, hasActiveDownload);
 
   const checkConnection = useCallback(() => {
-    if (Platform.OS !== 'android') {
-      setConnected(null);
-      return;
-    }
+    // Nothing to set on other platforms: `connected` starts null, which is what hides
+    // the banner, and `Platform.OS` cannot change under us. Setting it here was a
+    // synchronous setState inside the effect below, which cascades a second render to
+    // arrive at the value the first one already had.
+    if (Platform.OS !== 'android') return;
     getConnectedNodes().then((nodes) => setConnected(nodes.length > 0));
   }, []);
 
@@ -209,23 +237,48 @@ export default function WatchScreen() {
     <ThemedView style={styles.container}>
       {/* TTI for this route, once the watch list has loaded. See downloads.tsx. */}
       {!isLoading && <ObserveInteractiveMarker />}
-      <Stack.Screen
-        options={{
-          headerRight: () => (
-            <Pressable onPress={handleRefresh} disabled={isSyncing} hitSlop={8}>
-              {isSyncing ? (
-                <ActivityIndicator size="small" color={theme.text} />
-              ) : (
-                <SymbolView
-                  name={{ ios: 'arrow.trianglehead.2.clockwise', android: 'sync' }}
-                  size={22}
-                  tintColor={theme.text}
-                />
-              )}
-            </Pressable>
-          ),
-        }}
-      />
+      {/*
+        One header or the other, never both. The imperative `options` form replaces the
+        header configuration wholesale, so leaving it mounted would drop the action bar's
+        declarative toolbar items — the same trap documented on the podcast screen.
+      */}
+      {selection.active ? (
+        <SelectionActionBar
+          count={selection.count}
+          onExit={selection.exit}
+          onDelete={() => setConfirmRemove(true)}
+          deleteLabel={`Remove ${selection.count} ${
+            selection.count === 1 ? 'episode' : 'episodes'
+          } from watch`}
+          extraAction={
+            allErrored
+              ? {
+                  icon: require('@/assets/icons/sync.xml'),
+                  label: 'Retry',
+                  onPress: handleRetrySelected,
+                }
+              : undefined
+          }
+        />
+      ) : (
+        <Stack.Screen
+          options={{
+            headerRight: () => (
+              <Pressable onPress={handleRefresh} disabled={isSyncing} hitSlop={8}>
+                {isSyncing ? (
+                  <ActivityIndicator size="small" color={theme.text} />
+                ) : (
+                  <SymbolView
+                    name={{ ios: 'arrow.trianglehead.2.clockwise', android: 'sync' }}
+                    size={22}
+                    tintColor={theme.text}
+                  />
+                )}
+              </Pressable>
+            ),
+          }}
+        />
+      )}
       {connected !== null && Platform.OS === 'android' && (
         <View
           style={[
@@ -242,7 +295,7 @@ export default function WatchScreen() {
       <LegendList
         ref={listRef}
         data={watchList}
-        extraData={watchStatuses}
+        extraData={listExtraData}
         keyExtractor={(item) => item.episodeGuid}
         estimatedItemSize={ESTIMATED_ROW_HEIGHT}
         recycleItems
@@ -253,7 +306,10 @@ export default function WatchScreen() {
           <WatchRow
             item={item}
             watchStatus={watchStatuses.get(item.episodeGuid)}
-            onLongPress={() => handleLongPress(item)}
+            selecting={selection.active}
+            selected={selection.isSelected(item.episodeGuid)}
+            onToggle={() => selection.toggle(item.episodeGuid)}
+            onStartSelection={() => selection.start(item.episodeGuid)}
           />
         )}
         ListEmptyComponent={
@@ -265,11 +321,18 @@ export default function WatchScreen() {
         }
       />
 
-      <RetryDialog
-        visible={retryVisible}
-        episodeTitle={retryItem?.episode.title ?? ''}
-        onConfirm={confirmRetry}
-        onDismiss={() => setRetryVisible(false)}
+      <RemoveDialog
+        visible={confirmRemove}
+        title={
+          selection.count === 1 ? 'Remove episode?' : `Remove ${selection.count} episodes?`
+        }
+        message={
+          selection.count === 1
+            ? 'This will remove the episode from your watch queue.'
+            : `This will remove ${selection.count} episodes from your watch queue.`
+        }
+        onConfirm={handleRemoveSelected}
+        onDismiss={() => setConfirmRemove(false)}
       />
     </ThemedView>
   );
@@ -285,12 +348,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   list: {
-    padding: Spacing.three,
+    paddingHorizontal: Spacing.two,
+    paddingTop: Spacing.three,
     paddingBottom: Spacing.three + NowPlayingBarHeight,
   },
   episodeRow: {
     flexDirection: 'row',
     paddingVertical: Spacing.three,
+    // Horizontal padding belongs to the row rather than the list, so the selected
+    // tint has room inside it instead of running edge to edge against the text. The
+    // list gives back the same amount, leaving content where it always sat.
+    paddingHorizontal: Spacing.two,
     // Row spacing lives here rather than as a contentContainerStyle gap, which
     // a virtualized list cannot apply to its absolutely positioned items.
     marginBottom: Spacing.one,

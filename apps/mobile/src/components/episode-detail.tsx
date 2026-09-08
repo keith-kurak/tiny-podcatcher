@@ -6,19 +6,27 @@ import { useAudioPlayerStatus } from 'expo-audio';
 import { ObserveInteractiveMarker } from 'expo-observe';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { DownloadToggle } from '@/components/download-toggle';
 import { Image } from '@/components/image';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WatchToggle } from '@/components/watch-toggle';
 import { NowPlayingBarHeight, Spacing } from '@/constants/theme';
+import { useStatusColors } from '@/hooks/use-status-colors';
 import { useTheme } from '@/hooks/use-theme';
 import { SKIP_BACK_S, SKIP_FORWARD_S, useAudio } from '@/lib/audio-context';
-import { formatDate, formatDuration, parseDurationToSeconds, stripHtml } from '@/lib/format';
-import { useIsInDownloads } from '@/lib/queries';
-import { getCachedEpisodes, getPlaybackProgress, getSubscriptions } from '@/lib/storage';
+import { useDownloadContext } from '@/lib/download-context';
+import { formatBytes, formatDate, formatDuration, parseDurationToSeconds, stripHtml } from '@/lib/format';
+import { useDownloadMutations, useIsInDownloads } from '@/lib/queries';
+import {
+  getCachedEpisodes,
+  getPhoneLimitState,
+  getPlaybackProgress,
+  getSubscriptions,
+} from '@/lib/storage';
 import type { Episode, Podcast } from '@/lib/types';
 
 // Shared height for the slider and the buttons beside it, so their centre lines
@@ -56,6 +64,9 @@ export function EpisodeDetail({ episodeId, podcastId }: EpisodeDetailProps) {
   const status = useAudioPlayerStatus(player);
   const theme = useTheme();
   const { data: downloadItem } = useIsInDownloads(episodeId);
+  const { add } = useDownloadMutations();
+  const { getProgress, isWaitingForWifi } = useDownloadContext();
+  const [askDownload, setAskDownload] = useState(false);
 
   if (!episode) {
     return (
@@ -77,6 +88,19 @@ export function EpisodeDetail({ episodeId, podcastId }: EpisodeDetailProps) {
   const isDownloaded = downloadItem?.status === 'complete';
   const canPlay = isDownloaded || isThisEpisode;
 
+  const downloadProgress = getProgress(episode.guid);
+  const downloadFailed = downloadItem?.status === 'error';
+  /**
+   * A download this screen is waiting on. Covers 'pending' too: an episode queued behind
+   * the Wi-Fi-only setting has no progress yet but is on its way, and showing the
+   * playback bar for it would offer a play button that cannot do anything.
+   */
+  const downloadInFlight =
+    !isDownloaded &&
+    (downloadProgress != null ||
+      downloadItem?.status === 'downloading' ||
+      downloadItem?.status === 'pending');
+
   function handlePlayPause() {
     if (!podcast) return;
     if (isThisEpisode) {
@@ -84,7 +108,29 @@ export function EpisodeDetail({ episodeId, podcastId }: EpisodeDetailProps) {
       else resume();
     } else if (isDownloaded) {
       play(episode!, podcast, downloadItem?.localPath);
+    } else if (episode!.audioUrl) {
+      // Nothing to play yet. Rather than a dead button, say why and offer the fix.
+      setAskDownload(true);
     }
+  }
+
+  function handleConfirmDownload() {
+    setAskDownload(false);
+    const audioUrl = episode!.audioUrl;
+    if (!audioUrl) return;
+    // Same guard the download toggle applies. Starting a download the limit forbids
+    // would show a progress bar that never moves.
+    const limit = getPhoneLimitState();
+    if (!limit.allowed) {
+      Alert.alert(
+        'Phone storage limit reached',
+        `Downloaded episodes use ${formatBytes(limit.usedBytes)} of your ` +
+          `${formatBytes(limit.limitBytes)} limit. Remove an episode, or raise the ` +
+          `limit in Settings, to download another.`,
+      );
+      return;
+    }
+    add.mutate({ podcastId, episodeGuid: episode!.guid, audioUrl });
   }
 
   return (
@@ -118,22 +164,38 @@ export function EpisodeDetail({ episodeId, podcastId }: EpisodeDetailProps) {
           )}
         </View>
 
-        {(canPlay || episode.audioUrl) && (
-          <PlaybackControls
-            isPlaying={isPlaying}
-            currentTime={currentTime}
-            duration={activeDuration}
-            onPlayPause={handlePlayPause}
-            onSeek={async (seconds) => {
-              if (isThisEpisode) await player.seekTo(seconds);
-            }}
-            onSkipBack={skipBack}
-            onSkipForward={skipForward}
-            playbackRate={playbackRate}
-            onPlaybackRateChange={setPlaybackRate}
-            theme={theme}
-            disabled={!canPlay && !isThisEpisode}
+        {/*
+          One bar at a time. While a download is running it takes the playback bar's
+          place: there is nothing to scrub or play yet, and the progress is the only
+          thing worth that space.
+        */}
+        {downloadInFlight ? (
+          <DownloadProgressBar
+            progress={downloadProgress}
+            waitingForWifi={downloadItem?.status === 'pending' && isWaitingForWifi}
           />
+        ) : (
+          (canPlay || episode.audioUrl) && (
+            <PlaybackControls
+              isPlaying={isPlaying}
+              currentTime={currentTime}
+              duration={activeDuration}
+              onPlayPause={handlePlayPause}
+              onSeek={async (seconds) => {
+                if (isThisEpisode) await player.seekTo(seconds);
+              }}
+              onSkipBack={skipBack}
+              onSkipForward={skipForward}
+              playbackRate={playbackRate}
+              onPlaybackRateChange={setPlaybackRate}
+              theme={theme}
+              disabled={!canPlay && !isThisEpisode}
+              /* Play stays live even with nothing downloaded — tapping it is how the
+                 download gets offered. Only the scrubber and skips have nothing to act on. */
+              playDisabled={!canPlay && !isThisEpisode && !episode.audioUrl}
+              downloadFailed={downloadFailed}
+            />
+          )
         )}
 
         {episode.description && (
@@ -142,12 +204,77 @@ export function EpisodeDetail({ episodeId, podcastId }: EpisodeDetailProps) {
           </ThemedText>
         )}
       </ScrollView>
+
+      <ConfirmDialog
+        visible={askDownload}
+        title="Download this episode to your phone now?"
+        message={
+          episode.sizeBytes
+            ? `This episode is ${formatBytes(
+                episode.sizeBytes,
+              )}.`
+            : ''
+        }
+        confirmLabel="Download"
+        onConfirm={handleConfirmDownload}
+        onDismiss={() => setAskDownload(false)}
+      />
     </ThemedView>
   );
 }
 
 function formatRate(rate: number): string {
   return rate % 1 === 0 ? `${rate}x` : `${rate.toFixed(1)}x`;
+}
+
+/**
+ * The download's progress, in the space the playback bar will occupy once it finishes.
+ *
+ * Sized to the playback bar it replaces so the page does not jump when the download
+ * completes and the transport takes over.
+ */
+function DownloadProgressBar({
+  progress,
+  waitingForWifi,
+}: {
+  progress: number | null | undefined;
+  waitingForWifi: boolean;
+}) {
+  const statusColors = useStatusColors();
+  const pct = progress != null ? Math.round(progress * 100) : null;
+
+  return (
+    <View style={styles.downloadBar}>
+      <View style={styles.downloadLabelRow}>
+        <ThemedText type="small" themeColor="textSecondary">
+          {waitingForWifi
+            ? 'Waiting for Wi-Fi'
+            : pct != null
+              ? 'Downloading to your phone…'
+              : 'Starting download…'}
+        </ThemedText>
+        {pct != null && !waitingForWifi && (
+          <ThemedText type="small" themeColor="textSecondary">
+            {pct}%
+          </ThemedText>
+        )}
+      </View>
+      <View style={[styles.downloadTrack, { backgroundColor: statusColors.progressTrack }]}>
+        {/*
+          Only drawn once there is a real number. A zero-width fill and a full-width one
+          both say something untrue while the task is still starting up.
+        */}
+        {pct != null && !waitingForWifi && (
+          <View
+            style={[
+              styles.downloadFill,
+              { width: `${pct}%`, backgroundColor: statusColors.progressFill },
+            ]}
+          />
+        )}
+      </View>
+    </View>
+  );
 }
 
 /**
@@ -207,6 +334,8 @@ function PlaybackControls({
   onPlaybackRateChange,
   theme,
   disabled,
+  playDisabled,
+  downloadFailed,
 }: {
   isPlaying: boolean;
   currentTime: number;
@@ -218,8 +347,13 @@ function PlaybackControls({
   playbackRate: number;
   onPlaybackRateChange: (rate: number) => void;
   theme: ReturnType<typeof useTheme>;
+  /** No audio loaded: the scrubber and skips have nothing to move. */
   disabled?: boolean;
+  /** No audio and nothing downloadable either — then even play is dead. */
+  playDisabled?: boolean;
+  downloadFailed?: boolean;
 }) {
+  const statusColors = useStatusColors();
   const sheetRef = useRef<BottomSheetComponent>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   // While the thumb is held, `scrubTime` overrides the live playback position so
@@ -290,9 +424,9 @@ function PlaybackControls({
 
         <Pressable
           onPress={onPlayPause}
-          style={[styles.playButton, disabled && styles.controlDisabled]}
+          style={[styles.playButton, playDisabled && styles.controlDisabled]}
           hitSlop={8}
-          disabled={disabled}>
+          disabled={playDisabled}>
           <View pointerEvents="none">
             <SymbolView
               name={
@@ -323,6 +457,12 @@ function PlaybackControls({
           <ThemedText style={styles.speedButtonText}>{formatRate(playbackRate)}</ThemedText>
         </Pressable>
       </View>
+
+      {downloadFailed && (
+        <ThemedText type="small" style={[styles.centeredNote, { color: statusColors.error }]}>
+          Download failed. Tap play to try again.
+        </ThemedText>
+      )}
 
       {sheetOpen && (
         <BottomSheetComponent
@@ -417,6 +557,29 @@ const styles = StyleSheet.create({
   },
   controlDisabled: {
     opacity: 0.4,
+  },
+  downloadBar: {
+    // Matches the playback bar's height so completing a download does not shift the
+    // description below it.
+    minHeight: SliderRowHeight,
+    justifyContent: 'center',
+    gap: Spacing.two,
+  },
+  downloadLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  downloadTrack: {
+    height: 4,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  downloadFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  centeredNote: {
+    textAlign: 'center',
   },
   speedButton: {
     position: 'absolute',

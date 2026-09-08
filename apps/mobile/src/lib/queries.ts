@@ -125,7 +125,27 @@ export function useDownloadMutations() {
     },
   });
 
-  return { add, remove };
+  /**
+   * Delete several downloads at once.
+   *
+   * One mutation rather than a loop of `remove` so the list is invalidated once at the
+   * end. Looping would re-run the downloads query — which walks storage and joins every
+   * cached episode — once per deleted row.
+   */
+  const removeMany = useMutation({
+    mutationFn: ({ episodeGuids }: { episodeGuids: string[] }) => {
+      for (const guid of episodeGuids) {
+        cancelDownload(guid);
+        removeFromDownloads(guid);
+      }
+      return Promise.resolve();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['downloads'] });
+    },
+  });
+
+  return { add, remove, removeMany };
 }
 
 export function useWatchListQuery() {
@@ -221,5 +241,24 @@ export function useWatchListMutations() {
     },
   });
 
-  return { add, remove, triggerSync };
+  /**
+   * Remove several episodes from the watch queue at once.
+   *
+   * The batching matters more here than anywhere else: `triggerSync` publishes the whole
+   * list as a DataItem over the Bluetooth companion link, so a loop of single removes
+   * would push the same list ten times to delete ten episodes. Storage is mutated once
+   * per episode, then published once at the end.
+   */
+  const removeMany = useMutation({
+    mutationFn: ({ episodeGuids }: { episodeGuids: string[] }) => {
+      for (const guid of episodeGuids) removeFromWatchList(guid);
+      return Promise.resolve();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['watchList'] });
+      triggerSync();
+    },
+  });
+
+  return { add, remove, removeMany, triggerSync };
 }

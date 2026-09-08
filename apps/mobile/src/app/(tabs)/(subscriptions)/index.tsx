@@ -2,7 +2,7 @@ import { LegendList } from '@legendapp/list/react-native';
 import { FloatingActionButton, Host, Icon } from '@expo/ui/jetpack-compose';
 import { ObserveInteractiveMarker } from 'expo-observe';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,13 +14,22 @@ import {
 } from 'react-native';
 
 import { Image } from '@/components/image';
+import { RemoveDialog } from '@/components/remove-dialog';
+import {
+  SelectionCheck,
+  TileSelectionOverlay,
+  useSelectedRowStyle,
+} from '@/components/selectable';
+import { SelectionActionBar } from '@/components/selection-action-bar';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors, Spacing } from '@/constants/theme';
 import { useNowPlayingInset } from '@/hooks/use-now-playing-inset';
+import { useSelectionMode } from '@/hooks/use-selection-mode';
 import {
   getSubscriptions,
   getSubscriptionsViewMode,
+  removeSubscription,
   setSubscriptionsViewMode,
   type SubscriptionsViewMode,
 } from '@/lib/storage';
@@ -44,6 +53,20 @@ export default function SubscriptionsScreen() {
   const [podcasts, setPodcasts] = useState<Podcast[]>([]);
   const [viewMode, setViewMode] = useState<SubscriptionsViewMode>(getSubscriptionsViewMode);
   const [addingStarters, setAddingStarters] = useState(false);
+
+  const ids = useMemo(() => podcasts.map((p) => p.id), [podcasts]);
+  const selection = useSelectionMode(ids);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+
+  function handleUnsubscribeSelected() {
+    for (const id of selection.ids()) removeSubscription(id);
+    // `removeSubscription` also drops the podcast's cached episodes, so the downloads
+    // and watch lists lose their join target and those rows disappear on their next
+    // read. Re-reading here is what refreshes this screen.
+    setPodcasts(getSubscriptions());
+    setConfirmRemove(false);
+    selection.exit();
+  }
 
   useFocusEffect(
     useCallback(() => {
@@ -92,25 +115,37 @@ export default function SubscriptionsScreen() {
         storage synchronously, so this screen is usable as soon as it renders.
       */}
       <ObserveInteractiveMarker />
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Menu
-          icon={require('@/assets/icons/more_vert.xml')}
-          title="Layout"
-          accessibilityLabel="Change layout">
-          <Stack.Toolbar.MenuAction
-            icon={require('@/assets/icons/view_module.xml')}
-            isOn={isTile}
-            onPress={() => handleViewModeChange('tile')}>
-            Tile view
-          </Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.MenuAction
-            icon={require('@/assets/icons/view_list.xml')}
-            isOn={!isTile}
-            onPress={() => handleViewModeChange('list')}>
-            List view
-          </Stack.Toolbar.MenuAction>
-        </Stack.Toolbar.Menu>
-      </Stack.Toolbar>
+      {/* One header at a time: the layout menu belongs to browsing, not to selecting. */}
+      {selection.active ? (
+        <SelectionActionBar
+          count={selection.count}
+          onExit={selection.exit}
+          onDelete={() => setConfirmRemove(true)}
+          deleteLabel={`Unsubscribe from ${selection.count} ${
+            selection.count === 1 ? 'podcast' : 'podcasts'
+          }`}
+        />
+      ) : (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Menu
+            icon={require('@/assets/icons/more_vert.xml')}
+            title="Layout"
+            accessibilityLabel="Change layout">
+            <Stack.Toolbar.MenuAction
+              icon={require('@/assets/icons/view_module.xml')}
+              isOn={isTile}
+              onPress={() => handleViewModeChange('tile')}>
+              Tile view
+            </Stack.Toolbar.MenuAction>
+            <Stack.Toolbar.MenuAction
+              icon={require('@/assets/icons/view_list.xml')}
+              isOn={!isTile}
+              onPress={() => handleViewModeChange('list')}>
+              List view
+            </Stack.Toolbar.MenuAction>
+          </Stack.Toolbar.Menu>
+        </Stack.Toolbar>
+      )}
 
       <LegendList
         // Remounts on layout change: item size and column count both change, and the list
@@ -118,6 +153,7 @@ export default function SubscriptionsScreen() {
         key={viewMode}
         data={podcasts}
         keyExtractor={(item) => item.id}
+        extraData={selection.extraData}
         numColumns={isTile ? TILE_COLUMNS : 1}
         estimatedItemSize={isTile ? tileSize + TILE_GAP : LIST_ROW_HEIGHT}
         recycleItems
@@ -131,6 +167,10 @@ export default function SubscriptionsScreen() {
               podcast={item}
               size={tileSize}
               placeholderColor={colors.backgroundElement}
+              selecting={selection.active}
+              selected={selection.isSelected(item.id)}
+              onToggle={() => selection.toggle(item.id)}
+              onStartSelection={() => selection.start(item.id)}
               onPress={() =>
                 router.push({
                   pathname: '/(tabs)/(subscriptions)/podcast/[id]',
@@ -142,6 +182,10 @@ export default function SubscriptionsScreen() {
             <ListRow
               podcast={item}
               colors={colors}
+              selecting={selection.active}
+              selected={selection.isSelected(item.id)}
+              onToggle={() => selection.toggle(item.id)}
+              onStartSelection={() => selection.start(item.id)}
               onPress={() =>
                 router.push({
                   pathname: '/(tabs)/(subscriptions)/podcast/[id]',
@@ -165,6 +209,22 @@ export default function SubscriptionsScreen() {
         tree into React Native; `matchContents` sizes it to the button so the wrapper does
         not swallow touches around it.
       */}
+      <RemoveDialog
+        visible={confirmRemove}
+        title={
+          selection.count === 1
+            ? 'Unsubscribe?'
+            : `Unsubscribe from ${selection.count} podcasts?`
+        }
+        message={
+          selection.count === 1
+            ? 'This will remove the podcast and its cached episodes.'
+            : `This will remove ${selection.count} podcasts and their cached episodes.`
+        }
+        onConfirm={handleUnsubscribeSelected}
+        onDismiss={() => setConfirmRemove(false)}
+      />
+
       <Host
         matchContents
         style={[
@@ -229,18 +289,28 @@ function TileCell({
   podcast,
   size,
   placeholderColor,
+  selecting,
+  selected,
+  onToggle,
+  onStartSelection,
   onPress,
 }: {
   podcast: Podcast;
   size: number;
   placeholderColor: string;
+  selecting: boolean;
+  selected: boolean;
+  onToggle: () => void;
+  onStartSelection: () => void;
   onPress: () => void;
 }) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={selecting ? onToggle : onPress}
+      onLongPress={onStartSelection}
       accessibilityRole="button"
       accessibilityLabel={podcast.title}
+      accessibilityState={selecting ? { selected } : undefined}
       style={({ pressed }) => [
         { width: size, height: size, marginBottom: TILE_GAP },
         pressed && styles.pressed,
@@ -259,6 +329,12 @@ function TileCell({
           </ThemedText>
         </View>
       )}
+      {/*
+        A tile keeps its artwork when selected — it is the only thing identifying the
+        show — so the state is a scrim and a badge over the top rather than the row's
+        swap-the-thumbnail treatment.
+      */}
+      <TileSelectionOverlay selected={selected} />
     </Pressable>
   );
 }
@@ -266,19 +342,33 @@ function TileCell({
 function ListRow({
   podcast,
   colors,
+  selecting,
+  selected,
+  onToggle,
+  onStartSelection,
   onPress,
 }: {
   podcast: Podcast;
   colors: ThemeColors;
+  selecting: boolean;
+  selected: boolean;
+  onToggle: () => void;
+  onStartSelection: () => void;
   onPress: () => void;
 }) {
+  const selectedStyle = useSelectedRowStyle(selected);
+
   return (
     <Pressable
       style={({ pressed }) => [
         styles.row,
         { backgroundColor: pressed ? colors.backgroundSelected : 'transparent' },
+        selectedStyle,
       ]}
-      onPress={onPress}>
+      accessibilityState={selecting ? { selected } : undefined}
+      onLongPress={onStartSelection}
+      onPress={selecting ? onToggle : onPress}>
+      {selecting && <SelectionCheck selected={selected} />}
       {podcast.artworkUrl ? (
         <Image
           source={{ uri: podcast.artworkUrl }}
