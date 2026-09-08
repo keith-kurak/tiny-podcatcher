@@ -13,9 +13,8 @@ import { BackHandler } from 'react-native';
  * the only way out is a button the reader has to notice, and a bar reading "0 selected"
  * with a delete button that deletes nothing is a dead end.
  *
- * @param ids every id currently in the list, so "select all" and pruning have something
- * to work against. Pass the same order the list renders in; nothing here depends on it,
- * but it keeps `selectAll` predictable if that ever changes.
+ * @param ids every id currently in the list, so a selection can be filtered against
+ * what is actually on screen.
  */
 export function useSelectionMode(ids: string[]) {
   const [raw, setRaw] = useState<Set<string> | null>(null);
@@ -55,8 +54,6 @@ export function useSelectionMode(ids: string[]) {
     });
   }, []);
 
-  const selectAll = useCallback(() => setRaw(new Set(ids)), [ids]);
-
   // Hardware back leaves selection rather than the screen — the same thing the action
   // bar's X does, and what Android users expect from a contextual bar.
   useEffect(() => {
@@ -85,7 +82,6 @@ export function useSelectionMode(ids: string[]) {
     ids: useCallback(() => [...(selected ?? [])], [selected]),
     start,
     toggle,
-    selectAll,
     exit,
   };
 }

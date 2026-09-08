@@ -161,7 +161,6 @@ export default function DownloadsScreen() {
           count={selection.count}
           onExit={selection.exit}
           onDelete={() => setConfirmDelete(true)}
-          onSelectAll={selection.selectAll}
           deleteLabel={`Delete ${selection.count} ${
             selection.count === 1 ? 'download' : 'downloads'
           }`}
@@ -225,7 +224,6 @@ const styles = StyleSheet.create({
     // tint has room inside it instead of running edge to edge against the text. The
     // list gives back the same amount, leaving content where it always sat.
     paddingHorizontal: Spacing.two,
-    borderRadius: Spacing.two,
     // Row spacing lives here rather than as a contentContainerStyle gap, which
     // a virtualized list cannot apply to its absolutely positioned items.
     marginBottom: Spacing.one,

@@ -121,7 +121,6 @@ export default function SubscriptionsScreen() {
           count={selection.count}
           onExit={selection.exit}
           onDelete={() => setConfirmRemove(true)}
-          onSelectAll={selection.selectAll}
           deleteLabel={`Unsubscribe from ${selection.count} ${
             selection.count === 1 ? 'podcast' : 'podcasts'
           }`}

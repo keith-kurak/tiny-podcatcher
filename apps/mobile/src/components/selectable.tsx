@@ -72,10 +72,16 @@ export function TileSelectionOverlay({ selected }: { selected: boolean }) {
   );
 }
 
-/** Background tint for a selected row, to be spread into the row's style array. */
+/**
+ * Background tint for a selected row, to be spread into the row's style array.
+ *
+ * Square corners, overriding whatever radius the row carries for its pressed state. A
+ * run of adjacent selected rows should read as one block; rounding each one leaves
+ * pinched notches between them where the corners meet.
+ */
 export function useSelectedRowStyle(selected: boolean): StyleProp<ViewStyle> {
   const material = useMaterialColors();
-  return selected ? { backgroundColor: material.secondaryContainer } : null;
+  return selected ? { backgroundColor: material.secondaryContainer, borderRadius: 0 } : null;
 }
 
 const styles = StyleSheet.create({

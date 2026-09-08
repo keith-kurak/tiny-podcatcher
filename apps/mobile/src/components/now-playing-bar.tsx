@@ -63,7 +63,8 @@ export function NowPlayingBar() {
         <Pressable
           onPress={(e) => {
             e.stopPropagation();
-            status.playing ? pause() : resume();
+            if (status.playing) pause();
+            else resume();
           }}
           hitSlop={8}
           style={styles.playPause}>

@@ -16,14 +16,12 @@ export function SelectionActionBar({
   count,
   onExit,
   onDelete,
-  onSelectAll,
   deleteLabel,
   extraAction,
 }: {
   count: number;
   onExit: () => void;
   onDelete: () => void;
-  onSelectAll: () => void;
   /** Names what is being removed, for screen readers: "Delete 3 downloads". */
   deleteLabel: string;
   /**
@@ -63,12 +61,6 @@ export function SelectionActionBar({
           onPress={onDelete}
           accessibilityLabel={deleteLabel}>
           Delete
-        </Stack.Toolbar.Button>
-        <Stack.Toolbar.Button
-          icon={require('@/assets/icons/select_all.xml')}
-          onPress={onSelectAll}
-          accessibilityLabel="Select all">
-          Select all
         </Stack.Toolbar.Button>
       </Stack.Toolbar>
     </>

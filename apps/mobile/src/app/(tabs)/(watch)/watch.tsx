@@ -202,10 +202,11 @@ export default function WatchScreen() {
   useScrollToActiveDownload(listRef, hasActiveDownload);
 
   const checkConnection = useCallback(() => {
-    if (Platform.OS !== 'android') {
-      setConnected(null);
-      return;
-    }
+    // Nothing to set on other platforms: `connected` starts null, which is what hides
+    // the banner, and `Platform.OS` cannot change under us. Setting it here was a
+    // synchronous setState inside the effect below, which cascades a second render to
+    // arrive at the value the first one already had.
+    if (Platform.OS !== 'android') return;
     getConnectedNodes().then((nodes) => setConnected(nodes.length > 0));
   }, []);
 
@@ -246,7 +247,6 @@ export default function WatchScreen() {
           count={selection.count}
           onExit={selection.exit}
           onDelete={() => setConfirmRemove(true)}
-          onSelectAll={selection.selectAll}
           deleteLabel={`Remove ${selection.count} ${
             selection.count === 1 ? 'episode' : 'episodes'
           } from watch`}
@@ -359,7 +359,6 @@ const styles = StyleSheet.create({
     // tint has room inside it instead of running edge to edge against the text. The
     // list gives back the same amount, leaving content where it always sat.
     paddingHorizontal: Spacing.two,
-    borderRadius: Spacing.two,
     // Row spacing lives here rather than as a contentContainerStyle gap, which
     // a virtualized list cannot apply to its absolutely positioned items.
     marginBottom: Spacing.one,
