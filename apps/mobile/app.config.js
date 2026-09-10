@@ -22,7 +22,7 @@ module.exports = ({ config }) => ({
   ...config,
   name: IS_DEV ? "PDuck (Dev)" : "Podcast Duck",
   slug: "podcatch",
-  version: "1.0.2",
+  version: "1.0.3",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: "podcatch",
