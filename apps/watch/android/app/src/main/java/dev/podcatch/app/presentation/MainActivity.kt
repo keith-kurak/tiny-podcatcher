@@ -61,6 +61,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -547,9 +548,12 @@ private fun EpisodeCard(
                     style = MaterialTheme.typography.body2,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    // Holds for 1.2s, scrolls, repeats 3 times, then rests on the start of
-                    // the title. Defaults come from the platform TextView marquee.
-                    modifier = Modifier.basicMarquee(),
+                    // Loops for as long as the title overflows, the way YouTube Music does.
+                    // The 3-repeat default parks on the clipped start of the title, and a
+                    // title cut off mid-word with no ellipsis is what Play flagged under
+                    // the Wear font-size guideline: at a large font nearly every title
+                    // overflows, so nearly every row ends up sitting cut.
+                    modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
                 )
                 Text(
                     text = episode.podcastTitle,
@@ -714,7 +718,10 @@ fun EpisodeListScreen(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                top = 32.dp,
+                // TimeText is an overlay, so the list has to reserve its height itself.
+                // The clock is sp-sized and grows with the user's font setting; a fixed
+                // 32dp let the first row sit under the clock at the larger sizes.
+                top = 32.dp * LocalDensity.current.fontScale,
                 start = 8.dp,
                 end = 8.dp,
                 bottom = if (showNowPlaying) NOW_PLAYING_CHIP_RESERVE else 0.dp,
@@ -921,8 +928,9 @@ private fun NowPlayingBar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 // Titles are routinely wider than the visible chord, and this is the one
-                // place you cannot tap through to read the full title.
-                modifier = Modifier.basicMarquee(),
+                // place you cannot tap through to read the full title. Loops rather than
+                // parking clipped, for the same reason as the episode card title.
+                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
             )
         }
     }
