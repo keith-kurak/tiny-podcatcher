@@ -4,7 +4,9 @@ How the Podcatch phone app and the Wear OS app exchange data, and how the watch 
 
 > **Keep this current.** Any change to the Data Layer contract, the download worker, or watch-side state must be reflected here in the same commit. See [Change log](#change-log).
 >
-> **Status:** describes behavior as of 2026-09-04. The [Known issues](#known-issues) section lists defects that exist in the code today.
+> **Status:** describes behavior as of 2026-09-11. The [Known issues](#known-issues) section lists defects that exist in the code today.
+>
+> **Shipping a phone change?** Read [Rules for a phone-only release](#rules-for-a-phone-only-release) before touching anything the watch reads.
 
 ---
 
@@ -99,6 +101,79 @@ DataItem directly, so a freshly installed watch picks up an existing preference.
 ### Capabilities
 
 Advertised via `CapabilityClient` so each side can discover the other: `podcatch_phone`, `podcatch_watch`.
+
+### Watch API version
+
+The two apps ship separately. A phone release almost never needs a matching watch release,
+and the point of this version is to record the rare case where it does.
+
+One number, declared in one file:
+
+| File | How it is used |
+|---|---|
+| `packages/shared/src/watch-api-version.json` | **The value.** Edit only this. |
+| `packages/shared/src/datalayer.ts` | Re-exports it as `WATCH_API_VERSION` |
+| `apps/mobile/app.config.js` | Reads it into `extra.watchApiVersion` |
+| `apps/watch/android/app/build.gradle.kts` | Reads it into `BuildConfig.WATCH_API_VERSION` |
+
+It is internal bookkeeping. Nothing is sent over the wire, and neither side refuses to run
+on a mismatch. It answers one question after the fact: which phone builds and which watch
+builds can be mixed.
+
+**Current version: 1.0.0** — the contract as documented in this section on 2026-09-11. It is
+the baseline. It says nothing about builds that shipped before it.
+
+#### When to bump
+
+| Part | Meaning | Examples |
+|---|---|---|
+| MAJOR | An older peer cannot survive the change. Phone and watch must be released together. | A path removed or renamed. A DataMap key removed or renamed. A payload's shape or unit changed. An existing field's meaning changed. A field that used to be optional becoming required. |
+| MINOR | Purely additive. An older peer ignores the new surface and keeps working. | A new path. A new optional field in an existing payload. A new `SyncedSettings` field. A new status value that falls into an existing default branch. |
+| PATCH | A fix inside a version that changes no wire shape. | A bug in how a payload is built or read, where the shape itself is unchanged. |
+
+**No bump is the normal case.** Most phone releases touch no contract surface at all. Do not
+bump for phone-only UI, storage, or playback changes.
+
+### Rules for a phone-only release
+
+These rules exist so that a phone release does not need a watch release. Follow them and a
+change stays MINOR; break one and it is MAJOR, which means shipping both sides at once.
+
+**When the phone sends:**
+
+1. **Add fields, never remove or rename them.** The watch reads a payload field by name.
+   A removed field reads as absent, and how the watch handles absent is per-field — some
+   fall back, some skip the episode. A renamed field is a removal plus an addition.
+2. **Never change the type, unit, or meaning of an existing field.** `positionMs` is
+   milliseconds forever. A field that meant "feed-declared size" cannot start meaning
+   "measured size".
+3. **Keep sending everything the watch already requires.** The episode payload
+   (`guid, title, podcastTitle, podcastId, audioUrl, duration, pubDate, artworkUrl`) is a
+   floor, not a suggestion. Dropping `audioUrl` does not fail a build on either side — the
+   watch simply stops downloading.
+4. **Keep publishing every DataItem the watch reads**, on the same triggers. A path the
+   phone silently stops writing looks identical to a phone that is out of range.
+5. **A new field must be optional on the watch side too.** The phone adding it is only half
+   the change; the watch must already tolerate its absence, because an old phone will not
+   send it. This is how `SyncedSettings.update` works today — it applies only the fields the
+   payload carries.
+
+**When the phone receives:**
+
+6. **Tolerate missing and unknown values.** A new `WatchEpisodeStatus` from a newer watch
+   must not crash or blank the UI, and a field an older watch does not send must have a
+   fallback. `sizeBytes` is the model: `0` from an old watch means "unknown", and the phone
+   falls back to the feed's number.
+7. **Never make an incoming watch message mandatory for phone correctness.** The watch is
+   often unreachable. Anything the phone needs must have a path that works without it.
+
+**Always:**
+
+8. **Change all three mirrored contract files together** — `datalayer.ts`,
+   `DataLayerContract.kt`, `WearDataLayerModule.kt`. Drift here breaks sync with no compile
+   error and no runtime error.
+9. **A MAJOR bump is a release-coordination task.** Bump the version, ship both artifacts,
+   and note it in the change log below.
 
 ---
 
@@ -881,6 +956,25 @@ duplication).
 ## 10. Change log
 
 Newest first. Add an entry whenever sync behavior changes.
+
+### 2026-09-11 — watch API version, and the rules that let a phone release ship alone
+
+No behavior change. This adds the bookkeeping that makes independent phone releases safe to
+reason about.
+
+- New `packages/shared/src/watch-api-version.json`, the single declaration of the contract
+  version. `datalayer.ts` re-exports it as `WATCH_API_VERSION`, `app.config.js` puts it in
+  `extra.watchApiVersion`, and the watch's `build.gradle.kts` puts it in
+  `BuildConfig.WATCH_API_VERSION`. One file, three readers — a second hand-maintained copy
+  would be the same drift problem the three mirrored contract files already have.
+- The watch build now enables `buildFeatures.buildConfig`, which AGP 8 defaults off.
+- New [Watch API version](#watch-api-version) and [Rules for a phone-only
+  release](#rules-for-a-phone-only-release) in section 2: what MAJOR/MINOR/PATCH mean here,
+  and the nine rules that keep a phone change from needing a simultaneous watch release.
+
+**Version 1.0.0 is the contract as documented on this date.** It is a baseline, not a claim
+about earlier builds. Nothing is sent over the wire and nothing enforces a match; the
+version records which builds can be mixed, for a human reading git history.
 
 ### 2026-09-04 — crash-loop breaker and free-space floor
 

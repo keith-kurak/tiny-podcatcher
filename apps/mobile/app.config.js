@@ -13,6 +13,18 @@
 // colour or the handoff flashes.
 const splashColors = require("./splash-colors.json");
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WATCH API VERSION
+//
+// The version of the phone <-> watch Data Layer contract this build implements.
+// Read from packages/shared so the phone app, the watch app's Gradle build, and
+// packages/shared/src/datalayer.ts all report ONE number.
+//
+// Bump it only on a contract change. The rules for which part to bump, and the
+// rules for keeping a phone-only release safe, are in docs/watch-sync.md § 2.
+// ─────────────────────────────────────────────────────────────────────────────
+const { watchApiVersion } = require("../../packages/shared/src/watch-api-version.json");
+
 const IS_DEV = (process.env.APP_VARIANT ?? "development") === "development";
 const APPLICATION_ID = IS_DEV
   ? "com.keithkurak.tinypodcatcher.dev"
@@ -109,6 +121,7 @@ module.exports = ({ config }) => ({
     reactCompiler: true,
   },
   extra: {
+    watchApiVersion,
     eas: {
       projectId: "0b463a40-4929-4d6e-a899-6d2d886a0b85",
     },

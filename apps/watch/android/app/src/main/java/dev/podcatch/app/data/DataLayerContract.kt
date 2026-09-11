@@ -9,6 +9,10 @@ package dev.podcatch.app.data
  *     apps/mobile/modules/wear-data-layer/android/.../WearDataLayerModule.kt
  *
  * ANY change must be made in all three, or phone <-> watch sync breaks silently.
+ *
+ * A change here may also need a watch API version bump — see BuildConfig.WATCH_API_VERSION,
+ * packages/shared/src/watch-api-version.json, and the compatibility rules in
+ * docs/watch-sync.md section 2.
  */
 object DataLayerContract {
     // DataClient item paths (persistent, replicated DataItems)
