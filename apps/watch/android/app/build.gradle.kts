@@ -23,6 +23,22 @@ plugins {
 val watchVersionCode = (project.findProperty("watchVersionCode") as String?)?.toInt() ?: 1
 val watchVersionName = (project.findProperty("watchVersionName") as String?) ?: "1.0.0"
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WATCH API VERSION — the phone <-> watch Data Layer contract this build implements.
+//
+// Deliberately NOT a gradle.properties value. The phone app declares the same number,
+// and a second hand-maintained copy is exactly the drift this repo already fights in
+// the three mirrored contract files. Both sides read this one JSON file instead.
+//
+// Bump it only on a contract change. The rules are in docs/watch-sync.md § 2.
+// ─────────────────────────────────────────────────────────────────────────────
+val watchApiVersion: String = groovy.json.JsonSlurper()
+    .parse(file("${rootProject.projectDir}/../../../packages/shared/src/watch-api-version.json"))
+    .let {
+        @Suppress("UNCHECKED_CAST")
+        (it as Map<String, Any>)["watchApiVersion"] as String
+    }
+
 android {
     namespace = "dev.podcatch.app"
     compileSdk = 35
@@ -33,6 +49,8 @@ android {
         targetSdk = 35
         versionCode = watchVersionCode
         versionName = watchVersionName
+
+        buildConfigField("String", "WATCH_API_VERSION", "\"$watchApiVersion\"")
     }
 
     signingConfigs {
@@ -81,7 +99,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    // buildConfig carries WATCH_API_VERSION; AGP 8 defaults it off.
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 }
 
 dependencies {

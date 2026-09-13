@@ -21,6 +21,31 @@ Podcast app built with Expo Router and React Native. Monorepo with the mobile ap
 amend the matching entry in its Known issues table, and add a Change log entry at the top
 of that section. A behavior change that lands without a doc update is incomplete.
 
+### Keep the phone independently shippable
+
+The phone app and the watch app ship as separate artifacts. A phone release must not
+require a watch release. Before changing anything the watch reads or writes, follow
+**Rules for a phone-only release** in `docs/watch-sync.md` § 2. In short:
+
+- Add fields; never remove, rename, or retype one.
+- Never change an existing field's unit or meaning.
+- Keep sending every field and every DataItem the watch already requires, on the same
+  triggers. Dropping one fails silently — no build error, no runtime error.
+- Tolerate missing or unknown values coming from the watch. An older watch omits new
+  fields; a newer watch may send status values this phone build has never seen.
+- Change all three mirrored contract files together.
+
+### Watch API version
+
+`packages/shared/src/watch-api-version.json` holds the contract version, and is the **only**
+place to edit it. `datalayer.ts`, `apps/mobile/app.config.js`, and the watch's
+`build.gradle.kts` all read that file.
+
+Bump it only for a contract change: MAJOR when an older peer cannot survive the change
+(both sides must then ship together), MINOR for a purely additive change, PATCH for a fix
+that alters no wire shape. **Most changes need no bump** — do not bump for phone-only UI,
+storage, or playback work.
+
 ## Argent Testing Workflow
 
 After making code changes that affect the mobile UI:
