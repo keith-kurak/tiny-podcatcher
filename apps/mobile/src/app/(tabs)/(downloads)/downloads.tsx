@@ -5,6 +5,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Image } from '@/components/image';
+import { formatTimeLeft, PlayedMarker } from '@/components/played-marker';
 import { RemoveDialog } from '@/components/remove-dialog';
 import { SelectionCheck, useSelectedRowStyle } from '@/components/selectable';
 import { SelectionActionBar } from '@/components/selection-action-bar';
@@ -12,6 +13,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { NowPlayingBarHeight, Spacing } from '@/constants/theme';
 import { useScrollToActiveDownload } from '@/hooks/use-scroll-to-active-download';
+import { usePlayedStatus } from '@/hooks/use-played-status';
 import { useSelectionMode } from '@/hooks/use-selection-mode';
 import { useStatusColors } from '@/hooks/use-status-colors';
 import { useAudio } from '@/lib/audio-context';
@@ -41,6 +43,9 @@ function DownloadRow({
   const isDownloading = item.status === 'downloading' || progress != null;
   const waitingForWifi = item.status === 'pending' && !isDownloading && isWaitingForWifi;
   const selectedStyle = useSelectedRowStyle(selected);
+  const played = usePlayedStatus(item.episodeGuid);
+  // Dims the content, not the row, so a selected row's tint stays at full strength.
+  const playedStyle = played.state === 'played' ? styles.played : null;
 
   return (
     <Pressable
@@ -64,14 +69,15 @@ function DownloadRow({
       {selecting && <SelectionCheck selected={selected} />}
       <Image
         source={{ uri: item.episode.imageUrl ?? item.podcast?.artworkUrl }}
-        style={styles.thumbnail}
+        style={[styles.thumbnail, playedStyle]}
         contentFit="cover"
       />
-      <View style={styles.episodeContent}>
+      <View style={[styles.episodeContent, playedStyle]}>
         <ThemedText style={styles.episodeTitle} numberOfLines={2}>
           {item.episode.title}
         </ThemedText>
         <View style={styles.episodeMeta}>
+          <PlayedMarker status={played} />
           {isDownloading && (
             <ThemedText type="small" themeColor="textSecondary">
               Downloading… {progress != null ? `${Math.round(progress * 100)}%` : ''}
@@ -92,10 +98,20 @@ function DownloadRow({
               {formatDate(item.episode.pubDate)}
             </ThemedText>
           )}
-          {item.episode.duration && (
+          {played.state === 'in_progress' ? (
             <ThemedText type="small" themeColor="textSecondary">
-              {formatDuration(item.episode.duration)}
+              {formatTimeLeft(played.remainingSeconds)}
             </ThemedText>
+          ) : played.state === 'played' ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              Played
+            </ThemedText>
+          ) : (
+            item.episode.duration && (
+              <ThemedText type="small" themeColor="textSecondary">
+                {formatDuration(item.episode.duration)}
+              </ThemedText>
+            )
           )}
           {/* Pushed to the far right of the meta row, level with the date and duration. */}
           {formatBytes(item.sizeBytes) !== '' && (
@@ -244,7 +260,11 @@ const styles = StyleSheet.create({
   },
   episodeMeta: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: Spacing.three,
+  },
+  played: {
+    opacity: 0.5,
   },
   sizeText: {
     // Takes the remaining width so the size sits against the right edge whatever

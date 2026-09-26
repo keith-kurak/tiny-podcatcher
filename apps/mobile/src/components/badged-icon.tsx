@@ -10,7 +10,7 @@ type SymbolName = React.ComponentProps<typeof SymbolView>['name'];
  * Download state shared by the phone and watch destination toggles.
  *
  * The destination glyph never changes — only its colour, plus a small badge in the
- * corner. Swapping the glyph out mid-download used to make it unclear what the
+ * corner for every state but idle. Swapping the glyph out mid-download used to make it unclear what the
  * button was even for.
  */
 export type DestinationState = 'idle' | 'pending' | 'downloading' | 'complete' | 'error';
@@ -31,6 +31,9 @@ const BADGE_SYMBOLS: Partial<Record<DestinationState, SymbolName>> = {
   pending: { ios: 'clock.fill', android: 'schedule' },
   downloading: { ios: 'arrow.down.circle.fill', android: 'download' },
   error: { ios: 'exclamationmark.circle.fill', android: 'error' },
+  // Colour alone was the only sign of a finished download, and primary against grey is
+  // easy to miss. The check makes every state readable from its shape.
+  complete: { ios: 'checkmark.circle.fill', android: 'check_circle' },
 };
 
 interface BadgedIconProps {

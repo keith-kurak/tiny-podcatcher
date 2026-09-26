@@ -6,6 +6,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, View } from 'react-native';
 
 import { Image } from '@/components/image';
+import { formatTimeLeft, PlayedMarker } from '@/components/played-marker';
 import { RemoveDialog } from '@/components/remove-dialog';
 import { SelectionCheck, useSelectedRowStyle } from '@/components/selectable';
 import { SelectionActionBar } from '@/components/selection-action-bar';
@@ -13,6 +14,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { NowPlayingBarHeight, Spacing } from '@/constants/theme';
 import { useScrollToActiveDownload } from '@/hooks/use-scroll-to-active-download';
+import { usePlayedStatus } from '@/hooks/use-played-status';
 import { useSelectionMode } from '@/hooks/use-selection-mode';
 import { useStatusColors } from '@/hooks/use-status-colors';
 import { useTheme } from '@/hooks/use-theme';
@@ -50,6 +52,9 @@ const WatchRow = memo(function WatchRow({
   const router = useRouter();
   const statusColors = useStatusColors();
   const selectedStyle = useSelectedRowStyle(selected);
+  const played = usePlayedStatus(item.episodeGuid);
+  // Dims the content, not the row, so a selected row's tint stays at full strength.
+  const playedStyle = played.state === 'played' ? styles.played : null;
   const status = watchStatus?.status ?? 'pending';
   const progress = watchStatus?.progress ?? 0;
   // What the watch measured beats what the feed claimed. Falls back to the feed size
@@ -80,14 +85,15 @@ const WatchRow = memo(function WatchRow({
       {selecting && <SelectionCheck selected={selected} />}
       <Image
         source={{ uri: item.episode.imageUrl ?? item.podcast?.artworkUrl }}
-        style={styles.thumbnail}
+        style={[styles.thumbnail, playedStyle]}
         contentFit="cover"
       />
-      <View style={styles.episodeContent}>
+      <View style={[styles.episodeContent, playedStyle]}>
         <ThemedText style={styles.episodeTitle} numberOfLines={2}>
           {item.episode.title}
         </ThemedText>
         <View style={styles.episodeMeta}>
+          <PlayedMarker status={played} />
           {isDownloading && (
             <ThemedText type="small" themeColor="textSecondary">
               Downloading… {progress > 0 ? `${progress}%` : ''}
@@ -123,10 +129,20 @@ const WatchRow = memo(function WatchRow({
               {formatDate(item.episode.pubDate)}
             </ThemedText>
           )}
-          {item.episode.duration && (
+          {played.state === 'in_progress' ? (
             <ThemedText type="small" themeColor="textSecondary">
-              {formatDuration(item.episode.duration)}
+              {formatTimeLeft(played.remainingSeconds)}
             </ThemedText>
+          ) : played.state === 'played' ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              Played
+            </ThemedText>
+          ) : (
+            item.episode.duration && (
+              <ThemedText type="small" themeColor="textSecondary">
+                {formatDuration(item.episode.duration)}
+              </ThemedText>
+            )
           )}
           {/* Pushed to the far right of the meta row, level with the date and duration. */}
           {formatBytes(displaySize) !== '' && (
@@ -379,7 +395,11 @@ const styles = StyleSheet.create({
   },
   episodeMeta: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: Spacing.three,
+  },
+  played: {
+    opacity: 0.5,
   },
   sizeText: {
     // Takes the remaining width so the size sits against the right edge whatever

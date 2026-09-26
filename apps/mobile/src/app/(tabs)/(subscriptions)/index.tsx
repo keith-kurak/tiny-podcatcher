@@ -31,9 +31,11 @@ import { formatShortDate } from '@/lib/format';
 import { useFeedMetaQuery } from '@/lib/queries';
 import {
   getSubscriptions,
+  getSubscriptionsShowLatestDates,
   getSubscriptionsSortMode,
   getSubscriptionsViewMode,
   removeSubscription,
+  setSubscriptionsShowLatestDates,
   setSubscriptionsSortMode,
   setSubscriptionsViewMode,
   type SubscriptionsSortMode,
@@ -59,6 +61,7 @@ export default function SubscriptionsScreen() {
   const [podcasts, setPodcasts] = useState<Podcast[]>([]);
   const [viewMode, setViewMode] = useState<SubscriptionsViewMode>(getSubscriptionsViewMode);
   const [sortMode, setSortMode] = useState<SubscriptionsSortMode>(getSubscriptionsSortMode);
+  const [showLatestDates, setShowLatestDates] = useState(getSubscriptionsShowLatestDates);
   const [addingStarters, setAddingStarters] = useState(false);
 
   const queryClient = useQueryClient();
@@ -74,6 +77,12 @@ export default function SubscriptionsScreen() {
 
   const ids = useMemo(() => sortedPodcasts.map((p) => p.id), [sortedPodcasts]);
   const selection = useSelectionMode(ids);
+  // The list re-renders its items only when `extraData` changes, and the dates arrive
+  // after the first render. Without them here, a tile keeps the label it first drew.
+  const listExtraData = useMemo(
+    () => [selection.extraData, feedMeta, showLatestDates],
+    [selection.extraData, feedMeta, showLatestDates],
+  );
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   function handleUnsubscribeSelected() {
@@ -105,9 +114,14 @@ export default function SubscriptionsScreen() {
     setSubscriptionsSortMode(mode);
   }
 
-  /** The newest episode's date, shown on each podcast only while sorting by it. */
+  function handleShowLatestDatesToggle() {
+    setShowLatestDates(!showLatestDates);
+    setSubscriptionsShowLatestDates(!showLatestDates);
+  }
+
+  /** The newest episode's date, shown on each podcast in either sort order unless turned off. */
   function latestLabel(podcast: Podcast): string | undefined {
-    if (!sortByLatest) return undefined;
+    if (!showLatestDates) return undefined;
     const latest = feedMeta?.[podcast.id]?.latestPubDate;
     return latest ? formatShortDate(latest) : undefined;
   }
@@ -181,14 +195,22 @@ export default function SubscriptionsScreen() {
               <Stack.Toolbar.MenuAction
                 icon={require('@/assets/icons/reorder.xml')}
                 isOn={!sortByLatest}
-                onPress={() => handleSortModeChange('manual')}>
-                Manual order
+                onPress={() => handleSortModeChange('unsorted')}>
+                Unsorted
               </Stack.Toolbar.MenuAction>
               <Stack.Toolbar.MenuAction
                 icon={require('@/assets/icons/schedule.xml')}
                 isOn={sortByLatest}
                 onPress={() => handleSortModeChange('latest')}>
                 Latest episode
+              </Stack.Toolbar.MenuAction>
+            </Stack.Toolbar.Menu>
+            <Stack.Toolbar.Menu inline title="Display">
+              <Stack.Toolbar.MenuAction
+                icon={require('@/assets/icons/event.xml')}
+                isOn={showLatestDates}
+                onPress={handleShowLatestDatesToggle}>
+                Latest episode dates
               </Stack.Toolbar.MenuAction>
             </Stack.Toolbar.Menu>
           </Stack.Toolbar.Menu>
@@ -201,7 +223,7 @@ export default function SubscriptionsScreen() {
         key={viewMode}
         data={sortedPodcasts}
         keyExtractor={(item) => item.id}
-        extraData={selection.extraData}
+        extraData={listExtraData}
         numColumns={isTile ? TILE_COLUMNS : 1}
         estimatedItemSize={isTile ? tileSize + TILE_GAP : LIST_ROW_HEIGHT}
         recycleItems
