@@ -26,7 +26,7 @@ export default function PodcastScreen() {
   const queryClient = useQueryClient();
 
   const podcast: Podcast | undefined = getSubscriptions().find((s) => s.id === id);
-  const { data: episodes = [], isLoading, refetch, isRefetching } = useFeedQuery(
+  const { data: episodes = [], isLoading, pullToRefresh, isRefetching } = useFeedQuery(
     id,
     podcast?.feedUrl ?? '',
   );
@@ -84,7 +84,7 @@ export default function PodcastScreen() {
         estimatedItemSize={ESTIMATED_ROW_HEIGHT}
         recycleItems
         refreshing={isRefetching}
-        onRefresh={() => refetch()}
+        onRefresh={pullToRefresh}
         onEndReached={hasMore ? loadNextPage : undefined}
         onEndReachedThreshold={0.5}
         contentContainerStyle={styles.list}

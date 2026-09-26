@@ -81,3 +81,17 @@ export function stripHtml(html: string): string {
     .replace(/&quot;/g, '"')
     .trim();
 }
+
+/**
+ * Compact date for a small tag: "Sep 24", or "Sep 24, 2025" outside the current year.
+ * Takes epoch milliseconds.
+ */
+export function formatShortDate(time: number): string {
+  const d = new Date(time);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+}

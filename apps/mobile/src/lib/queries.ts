@@ -1,4 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query';
+import { useCallback } from 'react';
 
 import { syncWatchEpisodes } from '@/hooks/useWearDataLayer';
 
@@ -12,6 +19,7 @@ import {
   getDownloadedSizeBytes,
   getDownloadItem,
   getDownloads,
+  getFeedMeta,
   getSubscriptions,
   getWatchList,
   isOnWatchList,
@@ -19,17 +27,69 @@ import {
   removeFromWatchList,
   setCachedEpisodes,
 } from './storage';
+import type { FeedMeta } from './storage';
 import type { DownloadStatus, Episode, Podcast } from './types';
 
-export function useFeedQuery(podcastId: string, feedUrl: string) {
-  return useQuery({
+/** How long a fetched feed counts as fresh. App start and resume refetch anything older. */
+export const FEED_STALE_TIME_MS = 60 * 60 * 1000;
+
+/**
+ * Pull-to-refresh ignores the cache, but not within this long of the last fetch. A feed
+ * does not change from one second to the next, and repeated pulls should not hammer the
+ * publisher's server.
+ */
+const PULL_REFRESH_COOLDOWN_MS = 30 * 1000;
+
+/**
+ * The one definition of a feed query, shared by the podcast screen and the app-wide
+ * refresh in `useFeedAutoRefresh` so both agree on the key, the cache, and the fetch.
+ */
+export function feedQueryOptions(queryClient: QueryClient, podcastId: string, feedUrl: string) {
+  return queryOptions({
     queryKey: ['feed', podcastId],
     queryFn: async () => {
       const { episodes } = await fetchFeed(feedUrl);
       setCachedEpisodes(podcastId, episodes);
+      // The subscriptions tab sorts on the newest episode date, which just changed.
+      queryClient.invalidateQueries({ queryKey: ['feedMeta'] });
       return episodes;
     },
+    staleTime: FEED_STALE_TIME_MS,
     initialData: () => getCachedEpisodes(podcastId) ?? undefined,
+    // Without this, TanStack dates the stored episodes to now and treats a list cached
+    // days ago as fresh — which is why a feed opened after launch stayed out of date.
+    initialDataUpdatedAt: () => getFeedMeta(podcastId).fetchedAt,
+  });
+}
+
+export function useFeedQuery(podcastId: string, feedUrl: string) {
+  const queryClient = useQueryClient();
+  const query = useQuery(feedQueryOptions(queryClient, podcastId, feedUrl));
+  const { refetch, dataUpdatedAt } = query;
+
+  /** For pull-to-refresh: fetch now, unless the last fetch was moments ago. */
+  const pullToRefresh = useCallback(() => {
+    if (Date.now() - dataUpdatedAt < PULL_REFRESH_COOLDOWN_MS) return;
+    void refetch();
+  }, [refetch, dataUpdatedAt]);
+
+  return { ...query, pullToRefresh };
+}
+
+/**
+ * Feed metadata for every subscription, keyed by podcast id.
+ *
+ * Read from storage, not the network. Each feed fetch invalidates it, so the
+ * subscriptions tab re-sorts as the app-wide refresh brings in new episodes.
+ */
+export function useFeedMetaQuery() {
+  return useQuery({
+    queryKey: ['feedMeta'],
+    queryFn: () => {
+      const meta: Record<string, FeedMeta> = {};
+      for (const p of getSubscriptions()) meta[p.id] = getFeedMeta(p.id);
+      return meta;
+    },
   });
 }
 
