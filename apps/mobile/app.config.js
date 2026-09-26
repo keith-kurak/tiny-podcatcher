@@ -39,6 +39,9 @@ module.exports = ({ config }) => ({
   icon: "./assets/images/icon.png",
   scheme: "podcatch",
   userInterfaceStyle: "automatic",
+  // No web. `eas update` exports every listed platform, and the web bundle cannot build:
+  // expo-sqlite's web worker imports a .wasm file that Metro does not resolve.
+  platforms: ["android", "ios"],
   ios: {
     icon: "./assets/expo.icon",
     bundleIdentifier: APPLICATION_ID,
@@ -53,10 +56,6 @@ module.exports = ({ config }) => ({
       foregroundImage: "./assets/images/android-icon-foreground.png"
     },
     predictiveBackGestureEnabled: false,
-  },
-  web: {
-    output: "static",
-    favicon: "./assets/images/favicon.png",
   },
   plugins: [
     "expo-router",
