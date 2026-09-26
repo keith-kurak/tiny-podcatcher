@@ -11,6 +11,7 @@ import { useAutoUpdate } from '@/hooks/use-auto-update';
 import { useFeedAutoRefresh } from '@/hooks/use-feed-auto-refresh';
 import { getConnectedNodes } from '@/hooks/useWearDataLayer';
 import { AudioProvider } from '@/lib/audio-context';
+import { useAutoDownload } from '@/lib/auto-download';
 import { DownloadProvider } from '@/lib/download-context';
 import {
   configureObserve,
@@ -23,6 +24,12 @@ import { WatchStatusProvider } from '@/lib/watch-status-context';
 // Before the first render, so startup metrics are collected under this config.
 configureObserve();
 
+
+/** Runs auto-download. A component of its own because it needs the download context. */
+function AutoDownloadRunner() {
+  useAutoDownload();
+  return null;
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -67,6 +74,7 @@ function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <DownloadProvider>
+      <AutoDownloadRunner />
       <WatchStatusProvider>
       <AudioProvider>
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>

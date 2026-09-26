@@ -3,10 +3,18 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ObserveInteractiveMarker } from 'expo-observe';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from 'react-native';
 
 import { DownloadToggle } from '@/components/download-toggle';
 import { Image } from '@/components/image';
+import { PodcastHeader } from '@/components/podcast-header';
 import { RemoveDialog } from '@/components/remove-dialog';
 import { WatchToggle } from '@/components/watch-toggle';
 import { ThemedText } from '@/components/themed-text';
@@ -44,6 +52,20 @@ export default function PodcastScreen() {
 
   const [showUnsubscribeDialog, setShowUnsubscribeDialog] = useState(false);
 
+  // The full title lives in the list header. The nav bar shows it only once the header's
+  // title has scrolled out of view, so it is never on screen twice.
+  const [titleBottom, setTitleBottom] = useState<number | null>(null);
+  const [titleScrolledAway, setTitleScrolledAway] = useState(false);
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (titleBottom == null) return;
+      const away = event.nativeEvent.contentOffset.y > titleBottom;
+      // Only on a change: a state update per scroll frame would re-render the whole list.
+      setTitleScrolledAway((prev) => (prev === away ? prev : away));
+    },
+    [titleBottom],
+  );
+
   function handleUnsubscribe() {
     removeSubscription(id);
     setShowUnsubscribeDialog(false);
@@ -64,19 +86,23 @@ export default function PodcastScreen() {
         options form replaces the header configuration wholesale, which drops the
         declarative `Stack.Toolbar` items below it.
       */}
-      <Stack.Title>{podcast?.title ?? 'Podcast'}</Stack.Title>
+      <Stack.Title>{titleScrolledAway ? (podcast?.title ?? '') : ''}</Stack.Title>
       {/*
-        The icon is required, not decorative: Android's toolbar renderer drops any button
-        without an `ImageSourcePropType` source, so a text-only button silently renders
+        The icons are required, not decorative: Android's toolbar renderer drops any item
+        without an `ImageSourcePropType` source, so a text-only item silently renders
         nothing. The label survives as the accessibility name.
       */}
       <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Button
-          icon={require('@/assets/icons/delete.xml')}
-          onPress={() => setShowUnsubscribeDialog(true)}
-          accessibilityLabel="Unsubscribe">
-          Unsubscribe
-        </Stack.Toolbar.Button>
+        <Stack.Toolbar.Menu
+          icon={require('@/assets/icons/more_vert.xml')}
+          title="More options"
+          accessibilityLabel="More options">
+          <Stack.Toolbar.MenuAction
+            icon={require('@/assets/icons/delete.xml')}
+            onPress={() => setShowUnsubscribeDialog(true)}>
+            Unsubscribe
+          </Stack.Toolbar.MenuAction>
+        </Stack.Toolbar.Menu>
       </Stack.Toolbar>
       <LegendList
         data={visibleEpisodes}
@@ -87,7 +113,18 @@ export default function PodcastScreen() {
         onRefresh={pullToRefresh}
         onEndReached={hasMore ? loadNextPage : undefined}
         onEndReachedThreshold={0.5}
+        onScroll={handleScroll}
+        scrollEventThrottle={32}
         contentContainerStyle={styles.list}
+        ListHeaderComponent={
+          podcast ? (
+            <PodcastHeader
+              podcast={podcast}
+              episodeCount={episodes.length}
+              onTitleLayout={setTitleBottom}
+            />
+          ) : null
+        }
         renderItem={({ item }) => (
           <Pressable
             style={styles.episodeRow}

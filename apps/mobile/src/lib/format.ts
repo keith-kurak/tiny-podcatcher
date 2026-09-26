@@ -95,3 +95,16 @@ export function formatShortDate(time: number): string {
     ...(sameYear ? {} : { year: 'numeric' }),
   });
 }
+
+/**
+ * How long ago something happened: "just now", "12m ago", "3h ago", then a short date.
+ * Takes epoch milliseconds.
+ */
+export function formatTimeAgo(time: number): string {
+  const minutes = Math.floor((Date.now() - time) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return formatShortDate(time);
+}
