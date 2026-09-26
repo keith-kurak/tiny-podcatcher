@@ -10,6 +10,8 @@ const DOWNLOADS_KEY = 'downloads';
 const WATCH_LIST_KEY = 'watchList';
 const WIFI_ONLY_KEY = 'wifiOnlyDownloads';
 const SUBSCRIPTIONS_VIEW_KEY = 'subscriptionsViewMode';
+const SUBSCRIPTIONS_SORT_KEY = 'subscriptionsSortMode';
+const SUBSCRIPTIONS_DATES_KEY = 'subscriptionsShowLatestDates';
 const PHONE_LIMIT_ON_KEY = 'phoneStorageLimitEnabled';
 const PHONE_LIMIT_BYTES_KEY = 'phoneStorageLimitBytes';
 const WATCH_LIMIT_ON_KEY = 'watchStorageLimitEnabled';
@@ -21,6 +23,10 @@ const ONBOARDING_SEEN_KEY = 'onboardingSeen';
 
 function episodesKey(podcastId: string) {
   return `episodes:${podcastId}`;
+}
+
+function feedMetaKey(podcastId: string) {
+  return `feedMeta:${podcastId}`;
 }
 
 export const episodesDir = new Directory(Paths.document, 'episodes');
@@ -46,6 +52,7 @@ export function removeSubscription(podcastId: string): void {
   const subs = getSubscriptions().filter((s) => s.id !== podcastId);
   Storage.setItemSync(SUBSCRIPTIONS_KEY, JSON.stringify(subs));
   Storage.removeItemSync(episodesKey(podcastId));
+  Storage.removeItemSync(feedMetaKey(podcastId));
 }
 
 export function getCachedEpisodes(podcastId: string): Episode[] | null {
@@ -59,6 +66,45 @@ export function setCachedEpisodes(
   episodes: Episode[],
 ): void {
   Storage.setItemSync(episodesKey(podcastId), JSON.stringify(episodes));
+  const meta: FeedMeta = { fetchedAt: Date.now(), latestPubDate: latestPubDate(episodes) };
+  Storage.setItemSync(feedMetaKey(podcastId), JSON.stringify(meta));
+}
+
+/**
+ * A few facts about a podcast's cached episode list, stored beside it.
+ *
+ * Kept apart from the episodes so the subscriptions tab can sort every podcast by its
+ * newest episode without parsing every feed's full episode list on each render.
+ */
+export interface FeedMeta {
+  /**
+   * When the episodes were last fetched, in epoch milliseconds. 0 when unknown — a
+   * cache written before this record existed — which makes the feed stale at once.
+   */
+  fetchedAt: number;
+  /** Publish time of the newest episode, in epoch milliseconds. Absent if no episode has a parseable date. */
+  latestPubDate?: number;
+}
+
+function latestPubDate(episodes: Episode[]): number | undefined {
+  let latest: number | undefined;
+  for (const e of episodes) {
+    if (!e.pubDate) continue;
+    const t = Date.parse(e.pubDate);
+    if (Number.isFinite(t) && (latest === undefined || t > latest)) latest = t;
+  }
+  return latest;
+}
+
+export function getFeedMeta(podcastId: string): FeedMeta {
+  const raw = Storage.getItemSync(feedMetaKey(podcastId));
+  if (raw) return JSON.parse(raw) as FeedMeta;
+  // A cache from before this record existed. Derive it once and write it back, so the
+  // episode list is parsed here only the first time.
+  const episodes = getCachedEpisodes(podcastId);
+  const meta: FeedMeta = { fetchedAt: 0, latestPubDate: episodes ? latestPubDate(episodes) : undefined };
+  if (episodes) Storage.setItemSync(feedMetaKey(podcastId), JSON.stringify(meta));
+  return meta;
 }
 
 export function getDownloads(): DownloadItem[] {
@@ -367,6 +413,29 @@ export function setSubscriptionsViewMode(mode: SubscriptionsViewMode): void {
   Storage.setItemSync(SUBSCRIPTIONS_VIEW_KEY, mode);
 }
 
+/**
+ * How the subscriptions tab orders its podcasts. `unsorted` is the order they were
+ * subscribed in; `latest` puts the podcast with the newest episode first.
+ */
+export type SubscriptionsSortMode = 'unsorted' | 'latest';
+
+export function getSubscriptionsSortMode(): SubscriptionsSortMode {
+  return Storage.getItemSync(SUBSCRIPTIONS_SORT_KEY) === 'latest' ? 'latest' : 'unsorted';
+}
+
+export function setSubscriptionsSortMode(mode: SubscriptionsSortMode): void {
+  Storage.setItemSync(SUBSCRIPTIONS_SORT_KEY, mode);
+}
+
+/** Whether each podcast on the subscriptions tab shows its newest episode's date. On by default. */
+export function getSubscriptionsShowLatestDates(): boolean {
+  return Storage.getItemSync(SUBSCRIPTIONS_DATES_KEY) !== 'false';
+}
+
+export function setSubscriptionsShowLatestDates(show: boolean): void {
+  Storage.setItemSync(SUBSCRIPTIONS_DATES_KEY, String(show));
+}
+
 function playbackKey(episodeGuid: string) {
   return `playback:${episodeGuid}`;
 }
@@ -399,6 +468,18 @@ export function getPlaybackProgress(episodeGuid: string): PlaybackProgress | nul
  * explicitly only when writing a position that came from the watch — keeping the watch's
  * timestamp is what stops the same position bouncing back as "newer" on the next sync.
  */
+const playbackProgressListeners = new Set<() => void>();
+
+/**
+ * Be told whenever any episode's saved position changes — a periodic save while playing,
+ * or a position merged in from the watch. Returns the unsubscribe function, in the shape
+ * `useSyncExternalStore` expects.
+ */
+export function subscribePlaybackProgress(listener: () => void): () => void {
+  playbackProgressListeners.add(listener);
+  return () => playbackProgressListeners.delete(listener);
+}
+
 export function setPlaybackProgress(
   episodeGuid: string,
   progress: PlaybackProgress,
@@ -408,6 +489,7 @@ export function setPlaybackProgress(
     updatedAt: progress.updatedAt ?? Date.now(),
   };
   Storage.setItemSync(playbackKey(episodeGuid), JSON.stringify(stamped));
+  for (const listener of playbackProgressListeners) listener();
 }
 
 /**

@@ -1,5 +1,6 @@
 import { LegendList } from '@legendapp/list/react-native';
-import { FloatingActionButton, Host, Icon } from '@expo/ui/jetpack-compose';
+import { FloatingActionButton, Host, Icon, useMaterialColors } from '@expo/ui/jetpack-compose';
+import { useQueryClient } from '@tanstack/react-query';
 import { ObserveInteractiveMarker } from 'expo-observe';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
@@ -26,11 +27,18 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors, Spacing } from '@/constants/theme';
 import { useNowPlayingInset } from '@/hooks/use-now-playing-inset';
 import { useSelectionMode } from '@/hooks/use-selection-mode';
+import { formatShortDate } from '@/lib/format';
+import { useFeedMetaQuery } from '@/lib/queries';
 import {
   getSubscriptions,
+  getSubscriptionsShowLatestDates,
+  getSubscriptionsSortMode,
   getSubscriptionsViewMode,
   removeSubscription,
+  setSubscriptionsShowLatestDates,
+  setSubscriptionsSortMode,
   setSubscriptionsViewMode,
+  type SubscriptionsSortMode,
   type SubscriptionsViewMode,
 } from '@/lib/storage';
 import { subscribeToStarterPodcasts } from '@/lib/starter-podcasts';
@@ -52,10 +60,29 @@ export default function SubscriptionsScreen() {
 
   const [podcasts, setPodcasts] = useState<Podcast[]>([]);
   const [viewMode, setViewMode] = useState<SubscriptionsViewMode>(getSubscriptionsViewMode);
+  const [sortMode, setSortMode] = useState<SubscriptionsSortMode>(getSubscriptionsSortMode);
+  const [showLatestDates, setShowLatestDates] = useState(getSubscriptionsShowLatestDates);
   const [addingStarters, setAddingStarters] = useState(false);
 
-  const ids = useMemo(() => podcasts.map((p) => p.id), [podcasts]);
+  const queryClient = useQueryClient();
+  const { data: feedMeta } = useFeedMetaQuery();
+  const sortByLatest = sortMode === 'latest';
+
+  const sortedPodcasts = useMemo(() => {
+    if (!sortByLatest) return podcasts;
+    // A podcast with no dated episode sinks to the bottom rather than jumping the queue.
+    const latest = (p: Podcast) => feedMeta?.[p.id]?.latestPubDate ?? 0;
+    return [...podcasts].sort((a, b) => latest(b) - latest(a));
+  }, [podcasts, feedMeta, sortByLatest]);
+
+  const ids = useMemo(() => sortedPodcasts.map((p) => p.id), [sortedPodcasts]);
   const selection = useSelectionMode(ids);
+  // The list re-renders its items only when `extraData` changes, and the dates arrive
+  // after the first render. Without them here, a tile keeps the label it first drew.
+  const listExtraData = useMemo(
+    () => [selection.extraData, feedMeta, showLatestDates],
+    [selection.extraData, feedMeta, showLatestDates],
+  );
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   function handleUnsubscribeSelected() {
@@ -71,12 +98,32 @@ export default function SubscriptionsScreen() {
   useFocusEffect(
     useCallback(() => {
       setPodcasts(getSubscriptions());
-    }, []),
+      // Adding a podcast or importing an OPML file writes feeds without going through the
+      // feed query, so its invalidation never fired for them.
+      queryClient.invalidateQueries({ queryKey: ['feedMeta'] });
+    }, [queryClient]),
   );
 
   function handleViewModeChange(mode: SubscriptionsViewMode) {
     setViewMode(mode);
     setSubscriptionsViewMode(mode);
+  }
+
+  function handleSortModeChange(mode: SubscriptionsSortMode) {
+    setSortMode(mode);
+    setSubscriptionsSortMode(mode);
+  }
+
+  function handleShowLatestDatesToggle() {
+    setShowLatestDates(!showLatestDates);
+    setSubscriptionsShowLatestDates(!showLatestDates);
+  }
+
+  /** The newest episode's date, shown on each podcast in either sort order unless turned off. */
+  function latestLabel(podcast: Podcast): string | undefined {
+    if (!showLatestDates) return undefined;
+    const latest = feedMeta?.[podcast.id]?.latestPubDate;
+    return latest ? formatShortDate(latest) : undefined;
   }
 
   async function handleAddStarters() {
@@ -129,8 +176,8 @@ export default function SubscriptionsScreen() {
         <Stack.Toolbar placement="right">
           <Stack.Toolbar.Menu
             icon={require('@/assets/icons/more_vert.xml')}
-            title="Layout"
-            accessibilityLabel="Change layout">
+            title="View options"
+            accessibilityLabel="View options">
             <Stack.Toolbar.MenuAction
               icon={require('@/assets/icons/view_module.xml')}
               isOn={isTile}
@@ -143,6 +190,29 @@ export default function SubscriptionsScreen() {
               onPress={() => handleViewModeChange('list')}>
               List view
             </Stack.Toolbar.MenuAction>
+            {/* Inline: drawn as a divided section of this menu, not a submenu to open. */}
+            <Stack.Toolbar.Menu inline title="Sort">
+              <Stack.Toolbar.MenuAction
+                icon={require('@/assets/icons/reorder.xml')}
+                isOn={!sortByLatest}
+                onPress={() => handleSortModeChange('unsorted')}>
+                Unsorted
+              </Stack.Toolbar.MenuAction>
+              <Stack.Toolbar.MenuAction
+                icon={require('@/assets/icons/schedule.xml')}
+                isOn={sortByLatest}
+                onPress={() => handleSortModeChange('latest')}>
+                Latest episode
+              </Stack.Toolbar.MenuAction>
+            </Stack.Toolbar.Menu>
+            <Stack.Toolbar.Menu inline title="Display">
+              <Stack.Toolbar.MenuAction
+                icon={require('@/assets/icons/event.xml')}
+                isOn={showLatestDates}
+                onPress={handleShowLatestDatesToggle}>
+                Latest episode dates
+              </Stack.Toolbar.MenuAction>
+            </Stack.Toolbar.Menu>
           </Stack.Toolbar.Menu>
         </Stack.Toolbar>
       )}
@@ -151,9 +221,9 @@ export default function SubscriptionsScreen() {
         // Remounts on layout change: item size and column count both change, and the list
         // caches measurements keyed by index.
         key={viewMode}
-        data={podcasts}
+        data={sortedPodcasts}
         keyExtractor={(item) => item.id}
-        extraData={selection.extraData}
+        extraData={listExtraData}
         numColumns={isTile ? TILE_COLUMNS : 1}
         estimatedItemSize={isTile ? tileSize + TILE_GAP : LIST_ROW_HEIGHT}
         recycleItems
@@ -165,6 +235,7 @@ export default function SubscriptionsScreen() {
           isTile ? (
             <TileCell
               podcast={item}
+              latestLabel={latestLabel(item)}
               size={tileSize}
               placeholderColor={colors.backgroundElement}
               selecting={selection.active}
@@ -181,6 +252,7 @@ export default function SubscriptionsScreen() {
           ) : (
             <ListRow
               podcast={item}
+              latestLabel={latestLabel(item)}
               colors={colors}
               selecting={selection.active}
               selected={selection.isSelected(item.id)}
@@ -287,6 +359,7 @@ function EmptyState({
 /** Artwork-only grid cell. The title is exposed to screen readers, not drawn. */
 function TileCell({
   podcast,
+  latestLabel,
   size,
   placeholderColor,
   selecting,
@@ -296,6 +369,7 @@ function TileCell({
   onPress,
 }: {
   podcast: Podcast;
+  latestLabel?: string;
   size: number;
   placeholderColor: string;
   selecting: boolean;
@@ -334,6 +408,7 @@ function TileCell({
         show — so the state is a scrim and a badge over the top rather than the row's
         swap-the-thumbnail treatment.
       */}
+      {latestLabel && <DateTag label={latestLabel} />}
       <TileSelectionOverlay selected={selected} />
     </Pressable>
   );
@@ -341,6 +416,7 @@ function TileCell({
 
 function ListRow({
   podcast,
+  latestLabel,
   colors,
   selecting,
   selected,
@@ -349,6 +425,7 @@ function ListRow({
   onPress,
 }: {
   podcast: Podcast;
+  latestLabel?: string;
   colors: ThemeColors;
   selecting: boolean;
   selected: boolean;
@@ -394,7 +471,28 @@ function ListRow({
           </ThemedText>
         )}
       </View>
+      {latestLabel && (
+        <ThemedText type="small" themeColor="textSecondary" style={styles.rowDate}>
+          {latestLabel}
+        </ThemedText>
+      )}
     </Pressable>
+  );
+}
+
+/** The newest episode's date, pinned to a tile's lower-right corner over the artwork. */
+function DateTag({ label }: { label: string }) {
+  const material = useMaterialColors();
+  return (
+    <View
+      pointerEvents="none"
+      style={[styles.dateTag, { backgroundColor: material.secondaryContainer }]}>
+      <ThemedText
+        type="small"
+        style={[styles.dateTagText, { color: material.onSecondaryContainer }]}>
+        {label}
+      </ThemedText>
+    </View>
   );
 }
 
@@ -462,6 +560,23 @@ const styles = StyleSheet.create({
   rowText: {
     flex: 1,
     gap: 2,
+  },
+  rowDate: {
+    // Lower right of the row, level with the author line rather than centred.
+    alignSelf: 'flex-end',
+  },
+  dateTag: {
+    position: 'absolute',
+    right: 6,
+    bottom: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  dateTagText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '600',
   },
   fabHost: {
     position: 'absolute',

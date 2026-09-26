@@ -187,11 +187,11 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
           const merged = getPlaybackProgress(loadedGuid);
           if (merged) player.seekTo(merged.position);
         }
-        // The played/in-progress icons read storage during render and have nothing to
-        // subscribe to, so a merged position stays invisible until something else
-        // re-renders the row. Invalidating the lists they sit in is that something.
+        // Progress is read from storage during render, with nothing to subscribe to, so
+        // re-run the watch list's storage read to re-render its rows. Not ['feed']:
+        // invalidating that refetches the RSS feed over the network, ignoring its cache,
+        // and a feed's episode rows show no progress anyway.
         queryClient.invalidateQueries({ queryKey: ['watchList'] });
-        queryClient.invalidateQueries({ queryKey: ['feed'] });
       },
     );
 
