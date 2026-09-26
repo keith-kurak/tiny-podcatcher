@@ -103,7 +103,7 @@ starts on 2026-09-26; keys that existed before then are grouped as the baseline.
 | `feedMeta:<podcastId>` | #48 | Derived from `episodes:<podcastId>`. Rebuilt from it when missing |
 | `subscriptionsSortMode` | #48 | Old code ignores it |
 | `subscriptionsShowLatestDates` | #48 | Old code ignores it |
-| `autoDownload:<podcastId>` | Auto-download | Per-podcast opt-in and last-check state |
+| `autoDownload:<podcastId>` | Auto-download | Per-podcast opt-in, and the last episode handled per destination |
 
 ---
 

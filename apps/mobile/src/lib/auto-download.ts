@@ -60,25 +60,17 @@ function decide(
   if (!state.enabled || state.handledGuid === episode.guid) {
     return { next: state, queue: false };
   }
-  const check = (outcome: 'queued' | 'present' | 'limit') => ({
-    at: Date.now(),
-    outcome,
-    episodeTitle: episode.title,
-  });
 
   const present = dest === 'phone' ? isInDownloads(episode.guid) : isOnWatchList(episode.guid);
   if (present) {
-    return {
-      next: { ...state, handledGuid: episode.guid, lastCheck: check('present') },
-      queue: false,
-    };
+    return { next: { ...state, handledGuid: episode.guid }, queue: false };
   }
   const limit = dest === 'phone' ? getPhoneLimitState() : getWatchLimitState();
   if (!limit.allowed) {
-    return { next: { ...state, lastCheck: check('limit') }, queue: false };
+    return { next: state, queue: false };
   }
   return {
-    next: { ...state, handledGuid: episode.guid, lastCheck: check('queued') },
+    next: { ...state, handledGuid: episode.guid },
     queue: true,
   };
 }

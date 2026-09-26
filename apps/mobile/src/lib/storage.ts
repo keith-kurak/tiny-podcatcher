@@ -454,19 +454,6 @@ export function setSubscriptionsShowLatestDates(show: boolean): void {
 
 export type AutoDownloadDestination = 'phone' | 'watch';
 
-/**
- * What the last auto-download check did for one destination.
- *
- * - `queued`: the latest episode was added to the download queue or the watch list.
- * - `present`: the latest episode was already there, so nothing was added.
- * - `limit`: the storage limit was reached, so nothing was added. Retried on the next check.
- */
-export interface AutoDownloadCheck {
-  at: number;
-  outcome: 'queued' | 'present' | 'limit';
-  episodeTitle: string;
-}
-
 export interface AutoDownloadDestinationState {
   enabled: boolean;
   /**
@@ -475,7 +462,6 @@ export interface AutoDownloadDestinationState {
    * on the watch) does not bring it straight back on the next check.
    */
   handledGuid?: string;
-  lastCheck?: AutoDownloadCheck;
 }
 
 export type AutoDownloadState = Record<AutoDownloadDestination, AutoDownloadDestinationState>;

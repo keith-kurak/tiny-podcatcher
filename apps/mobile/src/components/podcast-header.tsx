@@ -21,12 +21,8 @@ import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { autoDownloadQueryKey, useSetAutoDownload } from '@/lib/auto-download';
-import { formatTimeAgo, stripHtml } from '@/lib/format';
-import {
-  getAutoDownloadState,
-  type AutoDownloadDestination,
-  type AutoDownloadDestinationState,
-} from '@/lib/storage';
+import { stripHtml } from '@/lib/format';
+import { getAutoDownloadState } from '@/lib/storage';
 import type { Podcast } from '@/lib/types';
 
 /** Lines of description shown before "More". */
@@ -36,7 +32,6 @@ const SegmentedButtonRowHeight = 48;
 
 interface PodcastHeaderProps {
   podcast: Podcast;
-  episodeCount?: number;
   /** Reports where the title ends, so the screen can show it in the nav bar once scrolled past. */
   onTitleLayout?: (bottom: number) => void;
 }
@@ -45,7 +40,7 @@ interface PodcastHeaderProps {
  * The top of a subscribed podcast's episode list: artwork, full title, description, and
  * the per-podcast auto-download control.
  */
-export function PodcastHeader({ podcast, episodeCount, onTitleLayout }: PodcastHeaderProps) {
+export function PodcastHeader({ podcast, onTitleLayout }: PodcastHeaderProps) {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(false);
   const description = podcast.description ? stripHtml(podcast.description) : '';
@@ -86,11 +81,6 @@ export function PodcastHeader({ podcast, episodeCount, onTitleLayout }: PodcastH
           {podcast.author && (
             <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
               {podcast.author}
-            </ThemedText>
-          )}
-          {episodeCount != null && episodeCount > 0 && (
-            <ThemedText type="small" themeColor="textSecondary">
-              {episodeCount === 1 ? '1 episode' : `${episodeCount} episodes`}
             </ThemedText>
           )}
         </View>
@@ -146,39 +136,10 @@ export function PodcastHeader({ podcast, episodeCount, onTitleLayout }: PodcastH
               ))}
             </MultiChoiceSegmentedButtonRow>
           </Host>
-          {(['phone', 'watch'] as const).map((dest) => {
-            const text = statusText(dest, autoDownload[dest]);
-            return text ? (
-              <ThemedText key={dest} type="small" themeColor="textSecondary" numberOfLines={2}>
-                {text}
-              </ThemedText>
-            ) : null;
-          })}
         </View>
       )}
     </View>
   );
-}
-
-/** One line on what the last check did for a destination, or null when there is nothing to say. */
-function statusText(
-  dest: AutoDownloadDestination,
-  state: AutoDownloadDestinationState,
-): string | null {
-  const check = state.lastCheck;
-  if (!state.enabled || !check) return null;
-  const label = dest === 'phone' ? 'Phone' : 'Watch';
-  const when = formatTimeAgo(check.at);
-  switch (check.outcome) {
-    case 'queued':
-      return `${label}: queued “${check.episodeTitle}” · ${when}`;
-    case 'present':
-      return dest === 'phone'
-        ? `${label}: latest episode already downloaded`
-        : `${label}: latest episode already on the watch`;
-    case 'limit':
-      return `${label}: skipped, storage limit reached · ${when}`;
-  }
 }
 
 const styles = StyleSheet.create({

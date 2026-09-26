@@ -120,7 +120,6 @@ export default function PodcastScreen() {
           podcast ? (
             <PodcastHeader
               podcast={podcast}
-              episodeCount={episodes.length}
               onTitleLayout={setTitleBottom}
             />
           ) : null
