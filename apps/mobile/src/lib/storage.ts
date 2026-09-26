@@ -20,6 +20,7 @@ const WATCH_REPORTED_SIZES_KEY = 'watchReportedSizes';
 const SYNC_PLAYBACK_KEY = 'syncPlaybackProgress';
 const PLAYBACK_EPOCH_KEY = 'playbackProgressEpoch';
 const ONBOARDING_SEEN_KEY = 'onboardingSeen';
+const UPDATE_CHANNEL_KEY = 'updateChannel';
 
 function episodesKey(podcastId: string) {
   return `episodes:${podcastId}`;
@@ -204,6 +205,21 @@ export function getOnboardingSeen(): boolean {
 
 export function setOnboardingSeen(): void {
   Storage.setItemSync(ONBOARDING_SEEN_KEY, 'true');
+}
+
+/**
+ * The OTA update channel chosen on the Extra Stuff screen, or null if none was ever chosen.
+ *
+ * expo-updates persists the channel override itself, but offers no way to read it back, and
+ * `Updates.channel` only changes after a reload. A switch to a channel with no update yet
+ * does not reload, so this is what says which channel the app is on in the meantime.
+ */
+export function getSelectedUpdateChannel(): string | null {
+  return Storage.getItemSync(UPDATE_CHANNEL_KEY);
+}
+
+export function setSelectedUpdateChannel(channel: string): void {
+  Storage.setItemSync(UPDATE_CHANNEL_KEY, channel);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

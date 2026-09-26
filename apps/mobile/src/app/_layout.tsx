@@ -7,6 +7,7 @@ import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AppOnboarding } from '@/components/onboarding';
+import { UpdateBanner } from '@/components/update-banner';
 import { useAutoUpdate } from '@/hooks/use-auto-update';
 import { useFeedAutoRefresh } from '@/hooks/use-feed-auto-refresh';
 import { getConnectedNodes } from '@/hooks/useWearDataLayer';
@@ -108,6 +109,8 @@ function RootLayout() {
               }}
             />
           </Stack>
+          {/* After the navigator, so it floats above every screen. */}
+          <UpdateBanner />
         </ThemeProvider>
       </AudioProvider>
       </WatchStatusProvider>
