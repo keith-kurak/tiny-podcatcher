@@ -46,6 +46,19 @@ Bump it only for a contract change: MAJOR when an older peer cannot survive the 
 that alters no wire shape. **Most changes need no bump** — do not bump for phone-only UI,
 storage, or playback work.
 
+## Local Data and OTA Updates
+
+Phone JS ships over the air, so an older bundle on the same runtime can run again against data
+a newer bundle wrote (an EAS rollback, or a fallback to the embedded bundle).
+`docs/local-data-and-ota.md` holds the rules. **Read it before changing anything the phone
+stores** (`apps/mobile/src/lib/storage.ts`, stored shapes in `types.ts`, downloaded files).
+
+- OTA-safe changes are additive only: new keys and new optional fields. Never remove, rename,
+  retype, or migrate an existing key in place.
+- A change that is not additive must not ship OTA. Bump `version` in
+  `apps/mobile/app.config.js` to change the native runtime, and ship it in a store build.
+- Update the ledger and change log in that doc in the same commit.
+
 ## Argent Testing Workflow
 
 After making code changes that affect the mobile UI:

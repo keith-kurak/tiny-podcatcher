@@ -50,6 +50,10 @@ export function addSubscription(podcast: Podcast): void {
   if (subs.some((s) => s.id === podcast.id)) return;
   subs.push(podcast);
   Storage.setItemSync(SUBSCRIPTIONS_KEY, JSON.stringify(subs));
+  // Auto-download is off for a new subscription. A build older than auto-download does
+  // not remove this key on unsubscribe, so after an OTA rollback a stale one can outlive
+  // its subscription and would otherwise switch the feature back on at resubscribe.
+  Storage.removeItemSync(autoDownloadKey(podcast.id));
 }
 
 export function removeSubscription(podcastId: string): void {
