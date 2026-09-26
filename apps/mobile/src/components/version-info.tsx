@@ -1,10 +1,18 @@
 import { useMaterialColors } from '@expo/ui/jetpack-compose';
 import Constants from 'expo-constants';
+import { useRouter } from 'expo-router';
 import * as Updates from 'expo-updates';
+import { useRef } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
+import { channelLabel, isNonStableChannel, useUpdateChannel } from '@/lib/update-channel';
+
+/** Taps on the version number that open the Extra Stuff screen. */
+const SECRET_TAPS = 7;
+/** A longer pause between taps starts the count again. */
+const SECRET_TAP_GAP_MS = 1500;
 
 /**
  * Version and over-the-air update state — a footer for the bottom of Settings.
@@ -20,6 +28,25 @@ import { Spacing } from '@/constants/theme';
  */
 export function VersionInfo() {
   const material = useMaterialColors();
+  const router = useRouter();
+  const channel = useUpdateChannel();
+  const onNonStableChannel = isNonStableChannel(channel);
+  const taps = useRef({ count: 0, lastAt: 0 });
+
+  /**
+   * Seven quick taps open Extra Stuff. On beta or alpha one tap is enough: whoever switched
+   * there already knows the screen exists, and needs a quick way back.
+   */
+  function handleVersionPress() {
+    const now = Date.now();
+    const t = taps.current;
+    t.count = now - t.lastAt > SECRET_TAP_GAP_MS ? 1 : t.count + 1;
+    t.lastAt = now;
+    if (onNonStableChannel || t.count >= SECRET_TAPS) {
+      t.count = 0;
+      router.push('/(tabs)/(settings)/extra-stuff');
+    }
+  }
 
   const { currentlyRunning, isUpdatePending, isDownloading, downloadProgress } =
     Updates.useUpdates();
@@ -52,9 +79,22 @@ export function VersionInfo() {
 
   return (
     <View style={styles.container}>
-      <ThemedText type="small" themeColor="textSecondary">
-        Version {version}
-      </ThemedText>
+      {/* No button role off beta and alpha: the seven-tap entry is meant to stay hidden. */}
+      <Pressable
+        onPress={handleVersionPress}
+        hitSlop={8}
+        accessibilityRole={onNonStableChannel ? 'button' : undefined}
+        accessibilityHint={onNonStableChannel ? 'Opens Extra Stuff' : undefined}>
+        <ThemedText type="small" themeColor="textSecondary">
+          Version {version}
+        </ThemedText>
+      </Pressable>
+
+      {onNonStableChannel && (
+        <ThemedText type="smallBold" style={{ color: material.primary }}>
+          {channelLabel(channel)} channel
+        </ThemedText>
+      )}
 
       {statusLine && (
         <ThemedText type="small" themeColor="textSecondary">
