@@ -223,7 +223,12 @@ export default function WatchScreen() {
     // synchronous setState inside the effect below, which cascades a second render to
     // arrive at the value the first one already had.
     if (Platform.OS !== 'android') return;
-    getConnectedNodes().then((nodes) => setConnected(nodes.length > 0));
+    // A phone without the Wearable API (no Wear OS app, or an emulator without Play
+    // services for Wear) rejects rather than returning no nodes. That is still "no
+    // watch", and leaving `connected` null would hide the banner that says so.
+    getConnectedNodes()
+      .then((nodes) => setConnected(nodes.length > 0))
+      .catch(() => setConnected(false));
   }, []);
 
   useEffect(() => {
