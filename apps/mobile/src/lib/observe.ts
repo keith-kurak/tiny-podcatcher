@@ -11,6 +11,8 @@ export const ObserveEvent = {
   watchConnectionChecked: 'watch.connection.checked',
   phoneDownloadCompleted: 'phone.download.completed',
   watchDownloadCompleted: 'watch.download.completed',
+  watchPlaybackStarted: 'watch.playback.started',
+  watchPlaybackCompleted: 'watch.playback.completed',
 } as const;
 
 let configured = false;
@@ -90,6 +92,44 @@ export function logWatchDownloadCompleted(attributes: {
 }): void {
   Observe.logEvent(ObserveEvent.watchDownloadCompleted, {
     displayName: 'Episode downloaded to watch',
+    attributes,
+  });
+}
+
+// A type alias, not an interface: only an alias satisfies the attributes' index signature.
+type WatchPlaybackAttributes = {
+  episodeGuid: string;
+  /** `unknown` when the episode is no longer on the watch list. */
+  podcastId: string;
+  durationSeconds: number;
+};
+
+/**
+ * An episode was started on the watch, as observed from here: a position synced back
+ * from the watch moved it off unplayed.
+ *
+ * Unlike downloads, this needs no seeding. The phone stores the positions it merges, so a
+ * listen synced on one launch is already known on the next and is never logged twice. A
+ * listen that happened while this app was closed is logged when it syncs, which can be
+ * later than the listen itself.
+ *
+ * Only seen when playback sync is on, and only when the watch's position is the newer
+ * one — an episode then continued on the phone is the phone's play, not the watch's.
+ */
+export function logWatchPlaybackStarted(attributes: WatchPlaybackAttributes): void {
+  Observe.logEvent(ObserveEvent.watchPlaybackStarted, {
+    displayName: 'Episode started on watch',
+    attributes,
+  });
+}
+
+/**
+ * An episode was finished on the watch, as observed from here: a position synced back
+ * from the watch passed the played threshold. Same caveats as `logWatchPlaybackStarted`.
+ */
+export function logWatchPlaybackCompleted(attributes: WatchPlaybackAttributes): void {
+  Observe.logEvent(ObserveEvent.watchPlaybackCompleted, {
+    displayName: 'Episode finished on watch',
     attributes,
   });
 }

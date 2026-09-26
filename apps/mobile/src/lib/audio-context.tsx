@@ -21,9 +21,12 @@ import { Platform } from 'react-native';
 import WearDataLayerModule, {
   type WatchPlaybackProgress,
 } from '../../modules/wear-data-layer/src';
+import { logWatchPlaybackCompleted, logWatchPlaybackStarted } from '@/lib/observe';
+import { playedStatusOf, type PlayedState } from '@/lib/played-state';
 import { publishPlaybackProgress } from '@/lib/playback-sync';
 import {
   getPlaybackProgress,
+  getWatchList,
   mergeRemotePlaybackProgress,
   setPlaybackProgress,
 } from '@/lib/storage';
@@ -176,11 +179,17 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     const subscription = WearDataLayerModule.addListener(
       'onWatchPlaybackProgress',
       (event: { entries: WatchPlaybackProgress[] }) => {
+        // Played state before the merge, so a watch listen that moves an episode on can be
+        // told apart from a position update within the same state.
+        const before = new Map<string, PlayedState>(
+          event.entries.map((e) => [e.guid, playedStatusOf(getPlaybackProgress(e.guid)).state]),
+        );
         const applied = mergeRemotePlaybackProgress(
           event.entries,
           (guid) => player.playing && nowPlayingRef.current?.episode.guid === guid,
         );
         if (applied.length === 0) return;
+        logWatchPlaybackTransitions(applied, before);
 
         const loadedGuid = nowPlayingRef.current?.episode.guid;
         if (loadedGuid && applied.includes(loadedGuid)) {
@@ -340,4 +349,25 @@ export function useAudio() {
 export function useAudioStatus(): AudioStatus {
   const { player } = useAudio();
   return useAudioPlayerStatus(player);
+}
+
+/**
+ * Log the watch listens a merge revealed: an episode that left unplayed was started on
+ * the watch, and one that became played was finished there. One merge can do both, for a
+ * whole episode heard while this app was closed.
+ */
+function logWatchPlaybackTransitions(applied: string[], before: Map<string, PlayedState>) {
+  const watchList = getWatchList();
+  for (const guid of applied) {
+    const progress = getPlaybackProgress(guid);
+    const after = playedStatusOf(progress).state;
+    const was = before.get(guid) ?? 'unplayed';
+    const attributes = {
+      episodeGuid: guid,
+      podcastId: watchList.find((w) => w.episodeGuid === guid)?.podcastId ?? 'unknown',
+      durationSeconds: Math.round(progress?.duration ?? 0),
+    };
+    if (was === 'unplayed' && after !== 'unplayed') logWatchPlaybackStarted(attributes);
+    if (was !== 'played' && after === 'played') logWatchPlaybackCompleted(attributes);
+  }
 }
