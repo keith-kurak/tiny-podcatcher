@@ -53,6 +53,10 @@ export function PodcastHeader({ podcast, onTitleLayout }: PodcastHeaderProps) {
   const { data: autoDownload } = useQuery({
     queryKey: autoDownloadQueryKey(podcast.id),
     queryFn: () => getAutoDownloadState(podcast.id),
+    // Storage is the source of truth, and unsubscribing clears it without touching this
+    // cache. Dropping the entry once the header unmounts makes the next mount read storage
+    // again, so a resubscribed podcast shows auto-download off, not the old setting.
+    gcTime: 0,
   });
   const setAutoDownload = useSetAutoDownload();
 
