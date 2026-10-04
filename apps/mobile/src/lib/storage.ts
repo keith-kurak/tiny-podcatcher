@@ -30,6 +30,10 @@ function feedMetaKey(podcastId: string) {
   return `feedMeta:${podcastId}`;
 }
 
+function autoDownloadKey(podcastId: string) {
+  return `autoDownload:${podcastId}`;
+}
+
 export const episodesDir = new Directory(Paths.document, 'episodes');
 
 export function getDownloadPath(episodeGuid: string): string {
@@ -47,6 +51,10 @@ export function addSubscription(podcast: Podcast): void {
   if (subs.some((s) => s.id === podcast.id)) return;
   subs.push(podcast);
   Storage.setItemSync(SUBSCRIPTIONS_KEY, JSON.stringify(subs));
+  // Auto-download is off for a new subscription. A build older than auto-download does
+  // not remove this key on unsubscribe, so after an OTA rollback a stale one can outlive
+  // its subscription and would otherwise switch the feature back on at resubscribe.
+  Storage.removeItemSync(autoDownloadKey(podcast.id));
 }
 
 export function removeSubscription(podcastId: string): void {
@@ -54,6 +62,7 @@ export function removeSubscription(podcastId: string): void {
   Storage.setItemSync(SUBSCRIPTIONS_KEY, JSON.stringify(subs));
   Storage.removeItemSync(episodesKey(podcastId));
   Storage.removeItemSync(feedMetaKey(podcastId));
+  Storage.removeItemSync(autoDownloadKey(podcastId));
 }
 
 export function getCachedEpisodes(podcastId: string): Episode[] | null {
@@ -450,6 +459,40 @@ export function getSubscriptionsShowLatestDates(): boolean {
 
 export function setSubscriptionsShowLatestDates(show: boolean): void {
   Storage.setItemSync(SUBSCRIPTIONS_DATES_KEY, String(show));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTO-DOWNLOAD
+//
+// Per podcast, opt-in, and off by default. See lib/auto-download.ts for the rule
+// that reads and writes this.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type AutoDownloadDestination = 'phone' | 'watch';
+
+export interface AutoDownloadDestinationState {
+  enabled: boolean;
+  /**
+   * The newest episode this destination has already handled — queued, or found already
+   * present. Never queued again, so deleting an auto-downloaded episode (or removing it
+   * on the watch) does not bring it straight back on the next check.
+   */
+  handledGuid?: string;
+}
+
+export type AutoDownloadState = Record<AutoDownloadDestination, AutoDownloadDestinationState>;
+
+export function getAutoDownloadState(podcastId: string): AutoDownloadState {
+  const raw = Storage.getItemSync(autoDownloadKey(podcastId));
+  const stored = raw ? (JSON.parse(raw) as Partial<AutoDownloadState>) : {};
+  return {
+    phone: stored.phone ?? { enabled: false },
+    watch: stored.watch ?? { enabled: false },
+  };
+}
+
+export function setAutoDownloadState(podcastId: string, state: AutoDownloadState): void {
+  Storage.setItemSync(autoDownloadKey(podcastId), JSON.stringify(state));
 }
 
 function playbackKey(episodeGuid: string) {
