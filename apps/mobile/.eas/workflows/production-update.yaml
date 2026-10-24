@@ -1,0 +1,10 @@
+name: Publish a production update
+
+jobs:
+  publish_production_update:
+    name: Publish production update
+    environment: production
+    type: update
+    params:
+      channel: production
+      
