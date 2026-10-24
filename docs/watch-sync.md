@@ -4,7 +4,7 @@ How the Podcatch phone app and the Wear OS app exchange data, and how the watch 
 
 > **Keep this current.** Any change to the Data Layer contract, the download worker, or watch-side state must be reflected here in the same commit. See [Change log](#change-log).
 >
-> **Status:** describes behavior as of 2026-09-11. The [Known issues](#known-issues) section lists defects that exist in the code today.
+> **Status:** describes behavior as of 2026-09-26. The [Known issues](#known-issues) section lists defects that exist in the code today.
 >
 > **Shipping a phone change?** Read [Rules for a phone-only release](#rules-for-a-phone-only-release) before touching anything the watch reads.
 
@@ -190,6 +190,27 @@ guid, title, podcastTitle, podcastId, audioUrl, duration, pubDate, artworkUrl
 Episodes whose cached episode record cannot be found are skipped. The payload carries **no download state** — the watch owns that.
 
 `triggerSync()` fires on every watch-list add and remove.
+
+### Auto-download adds to the list too
+
+A podcast can opt in to auto-downloading its latest episode to the watch
+(`apps/mobile/src/lib/auto-download.ts`). This is a second writer to the same stored watch list.
+It uses the same path as `WatchToggle` — `addToWatchList()`, then `publishWatchList()` — so the
+payload, the DataItem, and the watch side are unchanged. One publish covers a whole batch of
+podcasts.
+
+It runs on app start, on each return to the foreground, and after any feed fetch. It is phone-only
+and needs the phone app open; the watch knows nothing about it.
+
+- **Wi-Fi.** It adds the episode whatever the network, exactly as a manual add does. The watch
+  applies its own Wi-Fi-only rule when it downloads.
+- **Storage limit.** It checks `getWatchLimitState()` like `WatchToggle`. When the limit is
+  reached it adds nothing and retries on the next check.
+- **Removal.** Each podcast records the last episode it handled (`handledGuid`) and never adds that
+  episode again. Without this, an episode removed on the watch would be re-added on the next
+  check — the phone drops it from the list when the removal arrives, and the next check would see
+  it missing. The tombstone would not help: pruning it on that same list arrival is what lets a
+  deliberate re-add work.
 
 ### The phone caps what it will queue
 
@@ -956,6 +977,14 @@ duplication).
 ## 10. Change log
 
 Newest first. Add an entry whenever sync behavior changes.
+
+### 2026-09-26 — auto-download to the watch
+
+No contract change and no version bump. The phone gained a second way to add to the watch list:
+per-podcast auto-download of the latest episode. See [Auto-download adds to the list
+too](#auto-download-adds-to-the-list-too). It uses the existing add-and-publish path, honours the
+phone-side watch storage limit, and never re-adds an episode it already handled, so a removal on
+the watch sticks.
 
 ### 2026-09-11 — watch API version, and the rules that let a phone release ship alone
 

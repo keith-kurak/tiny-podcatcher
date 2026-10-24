@@ -35,3 +35,5 @@ apps/mobile/modules/wear-data-layer/android/build/*
 apps/watch/android/.kotlin/*
 apps/watch/.idea/*
 apps/mobile/modules/wear-data-layer/android/.gradle/*
+# EAS Simulator session config — holds a daemon token, never commit
+.env.eas-simulator

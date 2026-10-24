@@ -6,7 +6,7 @@ import { useAudioPlayerStatus } from 'expo-audio';
 import { ObserveInteractiveMarker } from 'expo-observe';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { DownloadToggle } from '@/components/download-toggle';
@@ -354,6 +354,7 @@ function PlaybackControls({
   downloadFailed?: boolean;
 }) {
   const statusColors = useStatusColors();
+  const { width: windowWidth } = useWindowDimensions();
   const sheetRef = useRef<BottomSheetComponent>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   // While the thumb is held, `scrubTime` overrides the live playback position so
@@ -471,7 +472,12 @@ function PlaybackControls({
           enablePanDownToClose
           onClose={() => setSheetOpen(false)}
         >
-          <BottomSheetView style={styles.sheetContent}>
+          {/*
+            With no snapPoints the Android sheet sizes itself to its content, width
+            included, so the content would shrink to its natural width. Pin it to the
+            window so the slider spans the screen.
+          */}
+          <BottomSheetView style={[styles.sheetContent, { width: windowWidth }]}>
             <ThemedText style={styles.sheetTitle}>
               Playback Speed: {formatRate(playbackRate)}
             </ThemedText>
