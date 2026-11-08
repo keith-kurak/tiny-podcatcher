@@ -14,7 +14,12 @@ playServicesWearable = "19.0.0"
 work = "2.10.0"
 coil = "2.7.0"
 horologist = "0.7.15"
-media3 = "1.5.1"
+# Keep at 1.10.0 or later. Earlier versions send a podcast's embedded ID3 cover
+# (MediaMetadata.artworkData, often 500 KB or more) to each controller in one binder
+# call. That call fails with TransactionTooLargeException, and the Wear Media Controls
+# app and the Fitbit workout media page then cannot connect to the session.
+# 1.10+ needs compileSdk 36.
+media3 = "1.11.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }

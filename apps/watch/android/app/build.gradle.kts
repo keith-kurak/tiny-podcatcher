@@ -41,7 +41,7 @@ val watchApiVersion: String = groovy.json.JsonSlurper()
 
 android {
     namespace = "dev.podcatch.app"
-    compileSdk = 35
+    compileSdk = 36  // Media3 1.10+ requires it; see libs.versions.toml
 
     defaultConfig {
         applicationId = "com.keithkurak.tinypodcatcher"  // MUST match the phone app
