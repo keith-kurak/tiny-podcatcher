@@ -31,6 +31,7 @@ import {
   setPlaybackProgress,
 } from '@/lib/storage';
 import type { Episode, Podcast } from '@/lib/types';
+import { setLoadedPhoneEpisode } from '@/lib/auto-prune';
 
 const isAndroid = Platform.OS === 'android';
 
@@ -112,6 +113,8 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   const nowPlayingRef = useRef<NowPlaying | null>(null);
   useEffect(() => {
     nowPlayingRef.current = nowPlaying;
+    // Pruning must not delete the file under a loaded player.
+    setLoadedPhoneEpisode(nowPlaying?.episode.guid ?? null);
   }, [nowPlaying]);
 
   const clearPlayRetry = useCallback(() => {

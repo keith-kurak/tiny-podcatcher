@@ -120,7 +120,8 @@ It is internal bookkeeping. Nothing is sent over the wire, and neither side refu
 on a mismatch. It answers one question after the fact: which phone builds and which watch
 builds can be mixed.
 
-**Current version: 1.0.0** — the contract as documented in this section on 2026-09-11. It is
+**Current version: 1.1.0** — 1.0.0 plus the optional `podcastArtworkUrl` episode field
+(2026-11-08). 1.0.0 is the contract as documented in this section on 2026-09-11. It is
 the baseline. It says nothing about builds that shipped before it.
 
 #### When to bump
@@ -184,8 +185,13 @@ change stays MINOR; break one and it is MAJOR, which means shipping both sides a
 `useWatchListMutations.triggerSync()` in `apps/mobile/src/lib/queries.ts` builds the payload. For every entry in the stored watch list it emits:
 
 ```
-guid, title, podcastTitle, podcastId, audioUrl, duration, pubDate, artworkUrl
+guid, title, podcastTitle, podcastId, audioUrl, duration, pubDate, artworkUrl, podcastArtworkUrl
 ```
+
+`podcastArtworkUrl` (added in 1.1.0) is the podcast's own artwork. `artworkUrl` is the
+episode's artwork when the feed has one, else the same podcast artwork. The watch shows
+the podcast artwork until it has cached the episode's. It is optional on the watch: a phone
+older than 1.1.0 does not send it, and the watch then reads it as empty.
 
 Episodes whose cached episode record cannot be found are skipped. The payload carries **no download state** — the watch owns that.
 
@@ -199,8 +205,18 @@ It uses the same path as `WatchToggle` — `addToWatchList()`, then `publishWatc
 payload, the DataItem, and the watch side are unchanged. One publish covers a whole batch of
 podcasts.
 
-It runs on app start, on each return to the foreground, and after any feed fetch. It is phone-only
-and needs the phone app open; the watch knows nothing about it.
+It runs on app start, on each return to the foreground, after any feed fetch, and in a
+background task with the phone app closed (see below). It is phone-only; the watch knows
+nothing about it.
+
+**Background run.** `apps/mobile/src/lib/background-refresh.ts` defines an
+`expo-background-task` task. Android runs it through WorkManager, about once an hour at
+most and only with a network, while any podcast has auto-download on for either
+destination. Each run fetches the stale feeds of those podcasts, applies the rule below,
+prunes, and publishes the watch list once if it changed. A publish from a background run is
+the same `syncWatchEpisodes` DataItem write as a foreground one, so the watch receives it
+through `DataLayerListenerService` and starts its own download worker, exactly as it does
+for a manual add.
 
 - **Wi-Fi.** It adds the episode whatever the network, exactly as a manual add does. The watch
   applies its own Wi-Fi-only rule when it downloads.
@@ -211,6 +227,26 @@ and needs the phone app open; the watch knows nothing about it.
   check — the phone drops it from the list when the removal arrives, and the next check would see
   it missing. The tombstone would not help: pruning it on that same list arrival is what lets a
   deliberate re-add work.
+
+### Auto-download prunes what it added
+
+Auto-download adds one episode per podcast each time a new one is published, so it also
+removes old ones. The phone records each episode auto-download added, per destination
+(`autoDownloadedEpisodes` in phone storage). Pruning keeps the newest N of those per podcast,
+by publish date, and removes the rest. N is one global setting, 3 by default. Each
+destination has its own on/off switch, both on by default.
+
+- **Only auto-downloaded episodes.** An episode added by hand is never marked. A mark is
+  dropped when its episode leaves the list, so an episode removed and then added again by
+  hand is not pruned either.
+- **Watch removal is an ordinary list change.** Pruning calls `removeFromWatchList()` and
+  publishes the list. The watch then deletes the file, as for any episode the phone drops.
+  It is not a watch-side removal, so it writes no tombstone. **No contract change.**
+- **The phone cannot see watch playback.** A pruned watch episode is removed even if it is
+  half played on the watch. It is always one older than the N newest auto-downloads of that
+  podcast.
+- On the phone, only finished downloads count toward N, and the episode loaded in the
+  player is never removed.
 
 ### The phone caps what it will queue
 
@@ -249,9 +285,10 @@ Three entry points call `SyncedWatchEpisodes.update(json)`:
 
 - **`localPath`** — keeps the previous value, else probes disk for `<filesDir>/episodes/<guid>.mp3`
 - **`artworkPath`** — keeps the previous value, else probes disk for the hashed artwork filename
+- **`podcastArtworkPath`** — the same, for `podcastArtworkUrl`. Often the same file as `artworkPath`
 - **`downloadProgress`** — `100` if a local file exists, else the previous value, else `0`
 - **`error`** — **not carried over.** Always resets to `false`
-- **Removed episodes** — their audio file, their artwork (if unshared), and their `PlaybackState` entry are all deleted
+- **Removed episodes** — their audio file, their artwork and podcast artwork (if no kept episode uses them), and their `PlaybackState` entry are all deleted
 - **Tombstoned episodes** — skipped entirely, however the phone lists them (see below)
 
 ### Removal is owned by the watch
@@ -297,7 +334,7 @@ indefinitely. They are small, and the alternative is resurrecting episodes the u
 | Download progress | same | Yes, throttled to every 5% |
 | Download error flag | same | Yes |
 | Downloaded audio | `<filesDir>/episodes/<guid>.mp3` | Yes, on disk |
-| Cached artwork | `<filesDir>/episodes/artwork/<hash>.img` | Yes, on disk |
+| Cached artwork | `<filesDir>/episodes/artwork/<hash>.img`, at most 480 px on its longest side | Yes, on disk |
 | Playback position | `SharedPreferences("playback")` via `PlaybackState` | Yes, with an `updatedAt:` per guid — see [Playback progress sync](#7-playback-progress-sync) |
 
 Wear OS kills app processes aggressively, and WorkManager will start a fresh process to run
@@ -434,7 +471,9 @@ this change it did download, just unusably slowly.
    breaker means: report `halted`, return `failure()`, run nothing
 5. Acquires a high-bandwidth network (see above), or returns early when only the Bluetooth
    proxy is available
-6. Calls `downloadArtwork()` — caches every missing artwork image; failures are logged and skipped
+6. Calls `downloadArtwork()` — caches every missing artwork image, podcast artwork first;
+   failures are logged and skipped. Each file is scaled down by `ArtworkScaler` to at most
+   480 px on its longest side before it is stored
 7. Loops: takes the **first** episode where `localPath == null && !error && audioUrl.isNotBlank()`
 8. Checks the free-space floor (see below) before and during each episode
 9. Resumes from `<guid>.mp3.tmp` if one exists (see below), else starts fresh
@@ -977,6 +1016,29 @@ duplication).
 ## 10. Change log
 
 Newest first. Add an entry whenever sync behavior changes.
+
+### 2026-11-08 — background auto-download, pruning, podcast artwork fallback
+
+**Contract: MINOR, 1.0.0 → 1.1.0.** One new optional field in the watch episode payload,
+`podcastArtworkUrl`. A 1.0.0 watch ignores it. A 1.1.0 watch reads it as empty from a 1.0.0
+phone and behaves as before. Either side can ship first.
+
+- **Phone, background run.** Auto-download now also runs in an `expo-background-task` task,
+  so new episodes reach the phone and the watch with the phone app closed. See
+  [Auto-download adds to the list too](#auto-download-adds-to-the-list-too). It uses the
+  existing publish path. No contract change.
+- **Phone, pruning.** New [Auto-download prunes what it added](#auto-download-prunes-what-it-added).
+  It removes from the watch list through the existing path. No contract change.
+- **Watch, artwork.** `WatchEpisode` gains `podcastArtworkUrl` and `podcastArtworkPath`. The list
+  row draws the podcast artwork under the episode artwork, so the row is never blank while
+  the episode artwork downloads, and the row keeps its artwork slot when there is none. The
+  worker caches podcast artwork first.
+- **Watch, artwork size.** `ArtworkScaler` stores artwork at most 480 px on its longest side.
+  Feed artwork is often 3000 px and several MB, and decoding it for a 36 dp slot is what made
+  the list's artwork appear late. Files cached by an older build are scaled down when the app
+  opens and when the worker runs.
+- **Watch, player.** The player screen draws the episode artwork behind the controls at 25%
+  opacity, blurred.
 
 ### 2026-09-26 — auto-download to the watch
 

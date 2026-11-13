@@ -34,7 +34,7 @@ module.exports = ({ config }) => ({
   ...config,
   name: IS_DEV ? "PDuck (Dev)" : "Podcast Duck",
   slug: "podcatch",
-  version: "1.0.3",
+  version: "1.0.4",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: "podcatch",
@@ -65,6 +65,9 @@ module.exports = ({ config }) => ({
     "expo-status-bar",
     "expo-web-browser",
     "expo-sharing",
+    // Background auto-download. A native module, which is why `version` above moved to
+    // 1.0.4: an OTA update must never bring this JS to a binary that lacks it.
+    "expo-background-task",
     [
       "expo-splash-screen",
       {

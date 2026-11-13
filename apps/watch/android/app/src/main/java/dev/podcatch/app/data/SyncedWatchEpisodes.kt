@@ -26,7 +26,19 @@ data class WatchEpisode(
     /** Cached artwork file on disk, so the list renders offline. */
     val artworkPath: String? = null,
     val error: Boolean = false,
-)
+    /**
+     * The podcast's own artwork. Shown until [artworkPath] exists, so a row never sits
+     * blank while the episode's artwork downloads. Empty from a phone that predates watch
+     * API 1.1.0, which does not send it.
+     */
+    val podcastArtworkUrl: String = "",
+    /** Cached copy of [podcastArtworkUrl]. Often the same file as [artworkPath]. */
+    val podcastArtworkPath: String? = null,
+) {
+    /** Every cached artwork file this episode points at. */
+    val artworkPaths: List<String>
+        get() = listOfNotNull(artworkPath, podcastArtworkPath)
+}
 
 /**
  * The watch's view of the episodes the phone has queued for it.
@@ -103,6 +115,10 @@ object SyncedWatchEpisodes {
         return artworkDir?.let { File(it, name) }
     }
 
+    /** Path of the cached copy of [artworkUrl], or null when it is not cached. */
+    private fun cachedArtworkPath(artworkUrl: String): String? =
+        artworkFile(artworkUrl)?.takeIf { it.exists() }?.absolutePath
+
     /** Wire up preferences and the episodes directory. Cheap and idempotent. */
     fun init(context: Context) {
         val app = context.applicationContext
@@ -160,6 +176,8 @@ object SyncedWatchEpisodes {
         val localPath = storedPath?.takeIf { File(it).exists() }
         val storedArtwork = obj.optString("artworkPath", "").takeIf { it.isNotBlank() }
         val artworkPath = storedArtwork?.takeIf { File(it).exists() }
+        val storedPodcastArtwork = obj.optString("podcastArtworkPath", "").takeIf { it.isNotBlank() }
+        val podcastArtworkPath = storedPodcastArtwork?.takeIf { File(it).exists() }
         val storedProgress = obj.optInt("downloadProgress", 0)
         val progress = when {
             localPath != null -> 100
@@ -182,6 +200,8 @@ object SyncedWatchEpisodes {
             localPath = localPath,
             artworkPath = artworkPath,
             error = obj.optBoolean("error", false),
+            podcastArtworkUrl = obj.optString("podcastArtworkUrl", ""),
+            podcastArtworkPath = podcastArtworkPath,
         )
     }
 
@@ -198,6 +218,8 @@ object SyncedWatchEpisodes {
         put("localPath", localPath ?: "")
         put("artworkPath", artworkPath ?: "")
         put("error", error)
+        put("podcastArtworkUrl", podcastArtworkUrl)
+        put("podcastArtworkPath", podcastArtworkPath ?: "")
     }
 
     @Synchronized
@@ -239,10 +261,12 @@ object SyncedWatchEpisodes {
                 if (file?.exists() == true) file.absolutePath else null
             }
             val artworkUrl = obj.optString("artworkUrl", "")
-            val artworkPath = prev?.artworkPath ?: run {
-                val file = artworkFile(artworkUrl)
-                if (file?.exists() == true) file.absolutePath else null
-            }
+            val artworkPath = prev?.artworkPath ?: cachedArtworkPath(artworkUrl)
+            // Optional: absent from a phone older than watch API 1.1.0.
+            val podcastArtworkUrl = obj.optString("podcastArtworkUrl", "")
+            val podcastArtworkPath = prev?.podcastArtworkPath?.takeIf {
+                prev.podcastArtworkUrl == podcastArtworkUrl
+            } ?: cachedArtworkPath(podcastArtworkUrl)
             list.add(
                 WatchEpisode(
                     guid = guid,
@@ -259,15 +283,17 @@ object SyncedWatchEpisodes {
                     // A failure is sticky. Clearing it here would silently re-arm a
                     // failed episode on every sync from the phone; retry is manual.
                     error = prev?.error ?: false,
+                    podcastArtworkUrl = podcastArtworkUrl,
+                    podcastArtworkPath = podcastArtworkPath,
                 )
             )
         }
         // Delete downloaded files for episodes removed from the watch list
-        val keptArtwork = list.mapNotNull { it.artworkPath }.toSet()
+        val keptArtwork = list.flatMap { it.artworkPaths }.toSet()
         for ((guid, ep) in existing) {
             if (guid in newGuids) continue
             ep.localPath?.let { File(it).delete() }
-            ep.artworkPath?.let { if (it !in keptArtwork) File(it).delete() }
+            for (path in ep.artworkPaths) if (path !in keptArtwork) File(path).delete()
             // Partial downloads are kept across attempts so they can resume, so a
             // removed episode has to take its .tmp with it.
             episodesDir?.let { File(it, "$guid.mp3.tmp").delete() }
@@ -337,12 +363,28 @@ object SyncedWatchEpisodes {
         persist()
     }
 
-    /** Point every episode using [artworkUrl] at the cached file. */
+    /**
+     * Point every episode using [artworkUrl] at the cached file, as its own artwork or as
+     * its podcast's.
+     */
     fun markArtworkDownloaded(artworkUrl: String, path: String) {
         _episodes.update { list ->
-            list.map { if (it.artworkUrl == artworkUrl) it.copy(artworkPath = path) else it }
+            list.map {
+                var ep = it
+                if (ep.artworkUrl == artworkUrl) ep = ep.copy(artworkPath = path)
+                if (ep.podcastArtworkUrl == artworkUrl) ep = ep.copy(podcastArtworkPath = path)
+                ep
+            }
         }
         persist()
+    }
+
+    /** Artwork URLs that some episode uses and that are not cached yet. Podcast artwork first. */
+    fun missingArtworkUrls(): List<String> {
+        val list = _episodes.value
+        val podcast = list.filter { it.podcastArtworkPath == null }.map { it.podcastArtworkUrl }
+        val episode = list.filter { it.artworkPath == null }.map { it.artworkUrl }
+        return (podcast + episode).filter { it.isNotBlank() }.distinct()
     }
 
     fun markError(guid: String) {
@@ -370,9 +412,9 @@ object SyncedWatchEpisodes {
         episodesDir?.let { File(it, "$guid.mp3.tmp").delete() }
         // Artwork is shared between episodes of the same podcast, so it is only removed
         // when no remaining episode still points at it.
-        val artwork = episode.artworkPath
-        if (artwork != null && _episodes.value.none { it.guid != guid && it.artworkPath == artwork }) {
-            File(artwork).delete()
+        val others = _episodes.value.filter { it.guid != guid }
+        for (artwork in episode.artworkPaths) {
+            if (others.none { artwork in it.artworkPaths }) File(artwork).delete()
         }
         PlaybackState.forget(guid)
         lastPersistedProgress.remove(guid)

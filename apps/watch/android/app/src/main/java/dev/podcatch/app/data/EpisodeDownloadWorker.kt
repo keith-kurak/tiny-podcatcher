@@ -88,7 +88,7 @@ class EpisodeDownloadWorker(
         // so it is not spent on a run with no bytes to move.
         val episodes = SyncedWatchEpisodes.episodes.value
         val needsAudio = episodes.any { it.localPath == null && !it.error && it.audioUrl.isNotBlank() }
-        val needsArtwork = episodes.any { it.artworkPath == null && it.artworkUrl.isNotBlank() }
+        val needsArtwork = SyncedWatchEpisodes.missingArtworkUrls().isNotEmpty()
         if (!needsAudio && !needsArtwork) {
             Log.d(TAG, "Everything on the list is already downloaded; not touching the network")
             return@withContext Result.success()
@@ -355,10 +355,11 @@ class EpisodeDownloadWorker(
      * a missing image must not block or retry the audio downloads.
      */
     private fun downloadArtwork(network: Network?) {
-        val urls = SyncedWatchEpisodes.episodes.value
-            .filter { it.artworkPath == null && it.artworkUrl.isNotBlank() }
-            .map { it.artworkUrl }
-            .distinct()
+        // Artwork cached by an older build is still at feed size. No network needed.
+        ArtworkScaler.shrinkAll(SyncedWatchEpisodes.artworkDir)
+        // Podcast artwork first: one file covers every episode of a podcast, and the
+        // list shows it until each episode's own artwork arrives.
+        val urls = SyncedWatchEpisodes.missingArtworkUrls()
 
         for (url in urls) {
             val outFile = SyncedWatchEpisodes.artworkFile(url) ?: continue
@@ -376,7 +377,10 @@ class EpisodeDownloadWorker(
                     tmpFile.outputStream().use { dst -> src.copyTo(dst) }
                 }
                 connection.disconnect()
-                tmpFile.renameTo(outFile)
+                // Stored at watch size. A file that does not decode is kept as it came,
+                // which is what every build before the scaler did.
+                if (!ArtworkScaler.downscaleInto(tmpFile, outFile)) tmpFile.renameTo(outFile)
+                tmpFile.delete()
                 SyncedWatchEpisodes.markArtworkDownloaded(url, outFile.absolutePath)
                 Log.d(TAG, "Cached artwork $url")
             } catch (e: Exception) {
