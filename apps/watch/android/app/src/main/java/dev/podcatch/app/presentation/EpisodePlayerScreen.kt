@@ -2,6 +2,7 @@ package dev.podcatch.app.presentation
 
 import android.app.Application
 import android.content.ComponentName
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
@@ -16,6 +17,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -120,6 +123,7 @@ fun EpisodePlayerScreen(
         playerViewModel = playerViewModel,
         volumeViewModel = volumeViewModel,
         focusRequester = focusRequester,
+        background = { _ -> ArtworkBackdrop(episode) },
         mediaDisplay = { playerUiState ->
             MediaInfoWithElapsed(playerUiState, elapsedMs, durationMs)
         },
@@ -293,6 +297,27 @@ class EpisodePlayerViewModel(
         private const val POSITION_SAVE_INTERVAL_MS = 5_000L
     }
 }
+
+/**
+ * The episode's artwork behind the player, faint and blurred.
+ *
+ * Kept dim enough that the controls, the title, and the progress ring read exactly as
+ * they do on black. The blur removes the artwork's own text and edges, which would
+ * otherwise compete with the controls' outlines.
+ */
+@Composable
+private fun BoxScope.ArtworkBackdrop(episode: WatchEpisode) {
+    EpisodeArtwork(
+        episode = episode,
+        modifier = Modifier
+            .matchParentSize()
+            .alpha(BACKDROP_ALPHA)
+            .blur(BACKDROP_BLUR),
+    )
+}
+
+private const val BACKDROP_ALPHA = 0.25f
+private val BACKDROP_BLUR = 16.dp
 
 @OptIn(ExperimentalHorologistApi::class)
 @Composable

@@ -21,6 +21,10 @@ const SYNC_PLAYBACK_KEY = 'syncPlaybackProgress';
 const PLAYBACK_EPOCH_KEY = 'playbackProgressEpoch';
 const ONBOARDING_SEEN_KEY = 'onboardingSeen';
 const UPDATE_CHANNEL_KEY = 'updateChannel';
+const AUTO_DOWNLOADED_KEY = 'autoDownloadedEpisodes';
+const AUTO_PRUNE_PHONE_KEY = 'autoPrunePhone';
+const AUTO_PRUNE_WATCH_KEY = 'autoPruneWatch';
+const AUTO_PRUNE_KEEP_KEY = 'autoPruneKeepCount';
 
 function episodesKey(podcastId: string) {
   return `episodes:${podcastId}`;
@@ -154,6 +158,7 @@ export function removeFromDownloads(episodeGuid: string): void {
   }
   const filtered = downloads.filter((d) => d.episodeGuid !== episodeGuid);
   Storage.setItemSync(DOWNLOADS_KEY, JSON.stringify(filtered));
+  unmarkAutoDownloaded('phone', [episodeGuid]);
 }
 
 export function isInDownloads(episodeGuid: string): boolean {
@@ -180,6 +185,7 @@ export function addToWatchList(podcastId: string, episodeGuid: string): void {
 export function removeFromWatchList(episodeGuid: string): void {
   const list = getWatchList().filter((w) => w.episodeGuid !== episodeGuid);
   Storage.setItemSync(WATCH_LIST_KEY, JSON.stringify(list));
+  unmarkAutoDownloaded('watch', [episodeGuid]);
 }
 
 export function isOnWatchList(episodeGuid: string): boolean {
@@ -493,6 +499,91 @@ export function getAutoDownloadState(podcastId: string): AutoDownloadState {
 
 export function setAutoDownloadState(podcastId: string, state: AutoDownloadState): void {
   Storage.setItemSync(autoDownloadKey(podcastId), JSON.stringify(state));
+}
+
+/** True when any subscribed podcast auto-downloads to the phone or the watch. */
+export function hasAnyAutoDownloadEnabled(): boolean {
+  return getSubscriptions().some((p) => {
+    const state = getAutoDownloadState(p.id);
+    return state.phone.enabled || state.watch.enabled;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTO-DOWNLOAD PRUNING
+//
+// Episodes that auto-download added, per destination, so that pruning only ever
+// removes those. An episode the user added by hand is never pruned. A mark is
+// dropped when its episode leaves the downloads or the watch list, so an episode
+// removed and then added again by hand is not pruned either.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Default number of auto-downloaded episodes kept per podcast. */
+export const DefaultAutoPruneKeepCount = 3;
+export const MinAutoPruneKeepCount = 1;
+export const MaxAutoPruneKeepCount = 10;
+
+type AutoDownloadedMarks = Record<AutoDownloadDestination, string[]>;
+
+function getAutoDownloadedMarks(): AutoDownloadedMarks {
+  const raw = Storage.getItemSync(AUTO_DOWNLOADED_KEY);
+  const stored = raw ? (JSON.parse(raw) as Partial<AutoDownloadedMarks>) : {};
+  return { phone: stored.phone ?? [], watch: stored.watch ?? [] };
+}
+
+function setAutoDownloadedMarks(marks: AutoDownloadedMarks): void {
+  Storage.setItemSync(AUTO_DOWNLOADED_KEY, JSON.stringify(marks));
+}
+
+/** Guids that auto-download added to this destination and that are still marked. */
+export function getAutoDownloadedGuids(dest: AutoDownloadDestination): Set<string> {
+  return new Set(getAutoDownloadedMarks()[dest]);
+}
+
+export function markAutoDownloaded(dest: AutoDownloadDestination, episodeGuid: string): void {
+  const marks = getAutoDownloadedMarks();
+  if (marks[dest].includes(episodeGuid)) return;
+  marks[dest].push(episodeGuid);
+  setAutoDownloadedMarks(marks);
+}
+
+/** Drop marks for any of these guids. A no-op when none of them is marked. */
+export function unmarkAutoDownloaded(dest: AutoDownloadDestination, episodeGuids: string[]): void {
+  const marks = getAutoDownloadedMarks();
+  const drop = new Set(episodeGuids);
+  const kept = marks[dest].filter((g) => !drop.has(g));
+  if (kept.length === marks[dest].length) return;
+  marks[dest] = kept;
+  setAutoDownloadedMarks(marks);
+}
+
+function autoPruneKey(dest: AutoDownloadDestination) {
+  return dest === 'phone' ? AUTO_PRUNE_PHONE_KEY : AUTO_PRUNE_WATCH_KEY;
+}
+
+/**
+ * Whether old auto-downloaded episodes are removed from this destination. On by
+ * default: without it, background auto-download fills the device one episode at a time.
+ */
+export function getAutoPruneEnabled(dest: AutoDownloadDestination): boolean {
+  return getBooleanSetting(autoPruneKey(dest), true);
+}
+
+export function setAutoPruneEnabled(dest: AutoDownloadDestination, enabled: boolean): void {
+  Storage.setItemSync(autoPruneKey(dest), String(enabled));
+}
+
+/** How many auto-downloaded episodes of each podcast pruning keeps. Shared by both destinations. */
+export function getAutoPruneKeepCount(): number {
+  const raw = Storage.getItemSync(AUTO_PRUNE_KEEP_KEY);
+  const n = raw == null ? NaN : Number(raw);
+  if (!Number.isInteger(n)) return DefaultAutoPruneKeepCount;
+  return Math.min(MaxAutoPruneKeepCount, Math.max(MinAutoPruneKeepCount, n));
+}
+
+export function setAutoPruneKeepCount(count: number): void {
+  const n = Math.min(MaxAutoPruneKeepCount, Math.max(MinAutoPruneKeepCount, Math.round(count)));
+  Storage.setItemSync(AUTO_PRUNE_KEEP_KEY, String(n));
 }
 
 function playbackKey(episodeGuid: string) {

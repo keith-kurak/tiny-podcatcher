@@ -265,6 +265,9 @@ export function publishWatchList() {
       duration: episode.duration ?? '',
       pubDate: episode.pubDate ?? '',
       artworkUrl: episode.imageUrl ?? podcast?.artworkUrl ?? '',
+      // Optional, added in watch API 1.1.0. The watch shows it until it has cached the
+      // episode's own artwork. An older watch ignores it.
+      podcastArtworkUrl: podcast?.artworkUrl ?? '',
     }];
   });
   syncWatchEpisodes(enriched).catch(() => {});

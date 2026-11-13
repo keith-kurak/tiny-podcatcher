@@ -59,7 +59,6 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.compositeOver
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -100,7 +99,6 @@ import com.google.android.horologist.compose.ambient.AmbientAware
 import com.google.android.horologist.compose.ambient.AmbientState
 import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkManager
-import coil.compose.AsyncImage
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
@@ -114,6 +112,7 @@ import dev.podcatch.app.data.PlaybackProgressSync
 import dev.podcatch.app.data.WatchEpisode
 import dev.podcatch.app.data.SyncedSettings
 import dev.podcatch.app.data.SyncedSubscriptions
+import dev.podcatch.app.data.ArtworkScaler
 import dev.podcatch.app.data.SyncedWatchEpisodes
 import dev.podcatch.app.data.UpNextQueue
 import dev.podcatch.app.data.WatchDownloadStatusReporter
@@ -121,7 +120,6 @@ import dev.podcatch.app.playback.EpisodeProgress
 import dev.podcatch.app.playback.EpisodeStatus
 import dev.podcatch.app.playback.PlaybackState
 import dev.podcatch.app.playback.statusOf
-import java.io.File
 import kotlinx.coroutines.launch
 import dev.podcatch.app.presentation.theme.PodcatchTheme
 
@@ -147,6 +145,10 @@ class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
         DownloadRunGuard.resetBreaker(this)
         SyncedWatchEpisodes.load(this)
         SyncedWatchEpisodes.artworkDir?.mkdirs()
+        // Artwork cached at feed size by an older build decodes slowly in the list. Off
+        // the main thread: each large file is decoded once. A small file is skipped on its
+        // size alone, so later launches cost almost nothing.
+        Thread { ArtworkScaler.shrinkAll(SyncedWatchEpisodes.artworkDir) }.start()
         SyncedSettings.load(this)
         UpNextQueue.load(this)
         PlaybackState.init(this)
@@ -233,9 +235,8 @@ class MainActivity : ComponentActivity(), DataClient.OnDataChangedListener {
 
     private fun enqueueDownloads() {
         val hasWork = SyncedWatchEpisodes.episodes.value.any { episode ->
-            (episode.localPath == null && episode.audioUrl.isNotBlank()) ||
-                (episode.artworkPath == null && episode.artworkUrl.isNotBlank())
-        }
+            episode.localPath == null && episode.audioUrl.isNotBlank()
+        } || SyncedWatchEpisodes.missingArtworkUrls().isNotEmpty()
         if (!hasWork) return
 
         WorkManager.getInstance(this).enqueueUniqueWork(
@@ -529,19 +530,16 @@ private fun EpisodeCard(
                     onLongClick = onLongClick,
                 ),
         ) {
-            val artworkModel = episode.artworkPath?.let { File(it) }
-                ?: episode.artworkUrl.takeIf { it.isNotBlank() }
-            if (artworkModel != null) {
-                AsyncImage(
-                    model = artworkModel,
-                    contentDescription = episode.podcastTitle,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(6.dp)),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-            }
+            // The slot is always there, artwork or not, so the title does not shift
+            // sideways when the image arrives.
+            EpisodeArtwork(
+                episode = episode,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.White.copy(alpha = 0.08f)),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = episode.title,

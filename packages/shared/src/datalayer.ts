@@ -46,6 +46,9 @@ import watchApiVersionJson from "./watch-api-version.json";
  *
  * 1.0.0 is the contract as it stood on 2026-09-11 — everything documented in this
  * file. It is the baseline, not a claim about anything that shipped before it.
+ *
+ * 1.1.0 (2026-11-08) adds the optional `podcastArtworkUrl` field to each episode in the
+ * WATCH_EPISODES payload. See the change log in docs/watch-sync.md.
  */
 export const WATCH_API_VERSION: string = watchApiVersionJson.watchApiVersion;
 

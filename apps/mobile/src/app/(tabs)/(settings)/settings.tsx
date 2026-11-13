@@ -21,12 +21,15 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { VersionInfo } from '@/components/version-info';
 import { Colors, NowPlayingBarHeight, Spacing } from '@/constants/theme';
+import { usePruneAutoDownloads } from '@/lib/auto-download';
 import { useDownloadContext } from '@/lib/download-context';
 import { buildOpml, parseOpml } from '@/lib/opml';
 import { publishPlaybackProgress, publishSettings } from '@/lib/playback-sync';
 import { fetchFeed } from '@/lib/rss';
 import {
   addSubscription,
+  getAutoPruneEnabled,
+  getAutoPruneKeepCount,
   getPhoneStorageLimitBytes,
   getPhoneStorageLimitEnabled,
   getPhoneUsedBytes,
@@ -36,6 +39,10 @@ import {
   getWatchStorageLimitBytes,
   getWatchStorageLimitEnabled,
   getWifiOnlyDownloads,
+  MaxAutoPruneKeepCount,
+  MinAutoPruneKeepCount,
+  setAutoPruneEnabled,
+  setAutoPruneKeepCount,
   setCachedEpisodes,
   setPhoneStorageLimitBytes,
   setPhoneStorageLimitEnabled,
@@ -61,7 +68,11 @@ export default function SettingsScreen() {
   const [watchLimitBytes, setWatchLimitBytes] = useState(getWatchStorageLimitBytes);
   const [phoneUsed, setPhoneUsed] = useState(0);
   const [watchQueued, setWatchQueued] = useState(0);
+  const [prunePhone, setPrunePhone] = useState(() => getAutoPruneEnabled('phone'));
+  const [pruneWatch, setPruneWatch] = useState(() => getAutoPruneEnabled('watch'));
+  const [keepCount, setKeepCount] = useState(getAutoPruneKeepCount);
   const { drainPendingDownloads } = useDownloadContext();
+  const pruneAutoDownloads = usePruneAutoDownloads();
 
   useFocusEffect(
     useCallback(() => {
@@ -91,6 +102,21 @@ export default function SettingsScreen() {
   function handleWatchLimitBytesChange(bytes: number) {
     setWatchLimitBytes(bytes);
     setWatchStorageLimitBytes(bytes);
+  }
+
+  // Each change that can only remove more applies at once, rather than waiting for the
+  // next new episode. Turning cleanup off, or raising the count, removes nothing.
+  function handlePruneChange(dest: 'phone' | 'watch', enabled: boolean) {
+    (dest === 'phone' ? setPrunePhone : setPruneWatch)(enabled);
+    setAutoPruneEnabled(dest, enabled);
+    if (enabled) pruneAutoDownloads();
+  }
+
+  function handleKeepCountChange(count: number) {
+    setAutoPruneKeepCount(count);
+    const stored = getAutoPruneKeepCount();
+    setKeepCount(stored);
+    if (stored < keepCount) pruneAutoDownloads();
   }
 
   function handleWifiOnlyChange(enabled: boolean) {
@@ -235,6 +261,57 @@ export default function SettingsScreen() {
           type="smallBold"
           themeColor="textSecondary"
           style={[styles.sectionTitle, styles.sectionSpacing]}>
+          AUTO-DOWNLOAD CLEANUP
+        </ThemedText>
+
+        <SwitchRow
+          icon={{ ios: 'iphone', android: 'smartphone' }}
+          title="Remove old episodes from phone"
+          subtitle="Only episodes that were auto-downloaded. Episodes you download yourself stay."
+          value={prunePhone}
+          onValueChange={(v) => handlePruneChange('phone', v)}
+          backgroundColor={colors.backgroundElement}
+          tintColor={colors.text}
+        />
+
+        <SwitchRow
+          icon={{ ios: 'applewatch', android: 'watch' }}
+          title="Remove old episodes from watch"
+          subtitle="Only episodes that were auto-downloaded. Episodes you send yourself stay."
+          value={pruneWatch}
+          onValueChange={(v) => handlePruneChange('watch', v)}
+          backgroundColor={colors.backgroundElement}
+          tintColor={colors.text}
+        />
+
+        <View style={[styles.row, { backgroundColor: colors.backgroundElement }]}>
+          <View style={styles.rowIcon}>
+            <SymbolView
+              name={{ ios: 'tray.full', android: 'auto_delete' }}
+              size={24}
+              tintColor={colors.text}
+            />
+          </View>
+          <View style={styles.rowText}>
+            <ThemedText style={styles.rowTitle}>Episodes to keep</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              The newest auto-downloaded episodes kept for each podcast.
+            </ThemedText>
+          </View>
+          <Stepper
+            value={keepCount}
+            min={MinAutoPruneKeepCount}
+            max={MaxAutoPruneKeepCount}
+            onChange={handleKeepCountChange}
+            tintColor={colors.text}
+            pressedColor={colors.backgroundSelected}
+          />
+        </View>
+
+        <ThemedText
+          type="smallBold"
+          themeColor="textSecondary"
+          style={[styles.sectionTitle, styles.sectionSpacing]}>
           PLAYBACK
         </ThemedText>
 
@@ -328,6 +405,83 @@ export default function SettingsScreen() {
 
 type SymbolName = React.ComponentProps<typeof SymbolView>['name'];
 
+interface SwitchRowProps {
+  icon: SymbolName;
+  title: string;
+  subtitle: string;
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+  backgroundColor: string;
+  tintColor: string;
+}
+
+function SwitchRow({
+  icon,
+  title,
+  subtitle,
+  value,
+  onValueChange,
+  backgroundColor,
+  tintColor,
+}: SwitchRowProps) {
+  return (
+    <View style={[styles.row, { backgroundColor }]}>
+      <View style={styles.rowIcon}>
+        <SymbolView name={icon} size={24} tintColor={tintColor} />
+      </View>
+      <View style={styles.rowText}>
+        <ThemedText style={styles.rowTitle}>{title}</ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {subtitle}
+        </ThemedText>
+      </View>
+      <MaterialSwitch value={value} onValueChange={onValueChange} />
+    </View>
+  );
+}
+
+interface StepperProps {
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+  tintColor: string;
+  pressedColor: string;
+}
+
+/** A small minus / value / plus control for a whole number. */
+function Stepper({ value, min, max, onChange, tintColor, pressedColor }: StepperProps) {
+  const button = (delta: -1 | 1) => {
+    const disabled = delta < 0 ? value <= min : value >= max;
+    return (
+      <Pressable
+        onPress={() => onChange(value + delta)}
+        disabled={disabled}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={delta < 0 ? 'Keep fewer' : 'Keep more'}
+        style={({ pressed }) => [
+          styles.stepperButton,
+          pressed && { backgroundColor: pressedColor },
+          disabled && styles.rowDisabled,
+        ]}>
+        <SymbolView
+          name={delta < 0 ? { ios: 'minus', android: 'remove' } : { ios: 'plus', android: 'add' }}
+          size={20}
+          tintColor={tintColor}
+        />
+      </Pressable>
+    );
+  };
+  return (
+    <View style={styles.stepper}>
+      {button(-1)}
+      <ThemedText style={styles.stepperValue}>{value}</ThemedText>
+      {button(1)}
+    </View>
+  );
+}
+
 interface SettingsRowProps {
   icon: SymbolName;
   title: string;
@@ -412,5 +566,23 @@ const styles = StyleSheet.create({
   },
   rowTitle: {
     fontWeight: '600',
+  },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+  },
+  stepperButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperValue: {
+    minWidth: 20,
+    textAlign: 'center',
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
   },
 });

@@ -1,19 +1,16 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { DownloadTask, File } from 'expo-file-system';
-import {
-  addNetworkStateListener,
-  getNetworkStateAsync,
-  NetworkStateType,
-  useNetworkState,
-} from 'expo-network';
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { addNetworkStateListener, NetworkStateType, useNetworkState } from 'expo-network';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
-import { HTTP_HEADERS } from './http';
-import { logPhoneDownloadCompleted } from './observe';
+import { pruneAutoDownloadsAfterCompletion } from './auto-prune';
 import {
-  episodesDir,
+  addDownloadStatusListener,
+  cancelEpisodeDownload,
+  downloadEpisode,
+  isDownloadInFlight,
+} from './episode-download';
+import {
   getCachedEpisodes,
-  getDownloadPath,
   getDownloads,
   getWifiOnlyDownloads,
   updateDownloadItem,
@@ -41,7 +38,6 @@ const DownloadContext = createContext<DownloadContextValue | null>(null);
 export function DownloadProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
   const [progressMap, setProgressMap] = useState<Map<string, number>>(new Map());
-  const tasksRef = useRef<Map<string, DownloadTask>>(new Map());
   const networkState = useNetworkState();
 
   // Treat an unknown network type as metered. Guessing "probably Wi-Fi" would be
@@ -50,93 +46,47 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
     networkState.type === NetworkStateType.ETHERNET;
   const isWaitingForWifi = getWifiOnlyDownloads() && !isUnmetered;
 
-  /**
-   * Whether downloads are currently blocked, read at call time rather than closure
-   * time. `startDownload` must not be re-created on every network change — callers
-   * hold it in their own dependency arrays.
-   */
-  const isBlocked = useCallback(async () => {
-    if (!getWifiOnlyDownloads()) return false;
-    const state = await getNetworkStateAsync();
-    return !(
-      state.type === NetworkStateType.WIFI || state.type === NetworkStateType.ETHERNET
-    );
-  }, []);
-
-  const invalidate = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['downloads'] });
-  }, [queryClient]);
-
-  const startDownload = useCallback(
-    async (audioUrl: string, podcastId: string, episodeGuid: string) => {
-      if (await isBlocked()) {
-        // Stay 'pending'. The queue is picked up again once Wi-Fi returns.
-        invalidate();
-        return;
-      }
-
-      if (!episodesDir.exists) {
-        episodesDir.create();
-      }
-
-      const localPath = getDownloadPath(episodeGuid);
-      const destFile = new File(localPath);
-
-      updateDownloadItem(episodeGuid, { status: 'downloading' });
-      invalidate();
-
-      const startedAt = Date.now();
-
-      const task = new DownloadTask(audioUrl, destFile, {
-        headers: HTTP_HEADERS,
-        onProgress: (progress) => {
-          const fraction =
-            progress.totalBytes > 0 ? progress.bytesWritten / progress.totalBytes : 0;
-          setProgressMap((prev) => {
-            const next = new Map(prev);
-            next.set(episodeGuid, fraction);
-            return next;
-          });
-        },
-      });
-
-      tasksRef.current.set(episodeGuid, task);
-
-      try {
-        await task.downloadAsync();
-        updateDownloadItem(episodeGuid, { status: 'complete', localPath });
-        logPhoneDownloadCompleted({
-          podcastId,
-          episodeGuid,
-          durationMs: Date.now() - startedAt,
-        });
-        setProgressMap((prev) => {
-          const next = new Map(prev);
-          next.delete(episodeGuid);
-          return next;
-        });
-      } catch {
-        updateDownloadItem(episodeGuid, { status: 'error' });
-      } finally {
-        tasksRef.current.delete(episodeGuid);
-        invalidate();
-      }
-    },
-    [invalidate, isBlocked],
+  // Every status change re-reads storage, including downloads the background task
+  // runs while the app is open.
+  useEffect(
+    () =>
+      addDownloadStatusListener(() => {
+        queryClient.invalidateQueries({ queryKey: ['downloads'] });
+      }),
+    [queryClient],
   );
 
-  const cancelDownload = useCallback((episodeGuid: string) => {
-    const task = tasksRef.current.get(episodeGuid);
-    if (task) {
-      task.cancel();
-      tasksRef.current.delete(episodeGuid);
-    }
+  const clearProgress = useCallback((episodeGuid: string) => {
     setProgressMap((prev) => {
+      if (!prev.has(episodeGuid)) return prev;
       const next = new Map(prev);
       next.delete(episodeGuid);
       return next;
     });
   }, []);
+
+  const startDownload = useCallback(
+    async (audioUrl: string, podcastId: string, episodeGuid: string) => {
+      const outcome = await downloadEpisode(audioUrl, podcastId, episodeGuid, (fraction) => {
+        setProgressMap((prev) => {
+          const next = new Map(prev);
+          next.set(episodeGuid, fraction);
+          return next;
+        });
+      });
+      if (outcome === 'complete' || outcome === 'error') clearProgress(episodeGuid);
+      if (outcome === 'complete') pruneAutoDownloadsAfterCompletion(episodeGuid);
+    },
+    [clearProgress],
+  );
+
+  const cancelDownload = useCallback(
+    (episodeGuid: string) => {
+      cancelEpisodeDownload(episodeGuid);
+      clearProgress(episodeGuid);
+    },
+    [clearProgress],
+  );
 
   const getProgress = useCallback(
     (episodeGuid: string) => progressMap.get(episodeGuid),
@@ -145,11 +95,12 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
   // Mark downloads that were cut off mid-transfer as errored. 'pending' is left
   // alone: with Wi-Fi-only downloads it is a legitimate resting state, not a
-  // sign that something died.
+  // sign that something died. A download still running in this runtime — the
+  // background task started it before the UI mounted — was not cut off.
   useEffect(() => {
     const items = getDownloads();
     for (const item of items) {
-      if (item.status === 'downloading') {
+      if (item.status === 'downloading' && !isDownloadInFlight(item.episodeGuid)) {
         updateDownloadItem(item.episodeGuid, { status: 'error' });
       }
     }

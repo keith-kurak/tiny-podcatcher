@@ -104,12 +104,33 @@ starts on 2026-09-26; keys that existed before then are grouped as the baseline.
 | `subscriptionsSortMode` | #48 | Old code ignores it |
 | `subscriptionsShowLatestDates` | #48 | Old code ignores it |
 | `autoDownload:<podcastId>` | Auto-download | Per-podcast opt-in, and the last episode handled per destination |
+| `autoDownloadedEpisodes` | Background auto-download (runtime 1.0.4) | `{ phone: guid[], watch: guid[] }`. Episodes auto-download added, so pruning removes only those |
+| `autoPrunePhone`, `autoPruneWatch` | Background auto-download (runtime 1.0.4) | `'true'`/`'false'`. Absent means on |
+| `autoPruneKeepCount` | Background auto-download (runtime 1.0.4) | Integer 1–10. Absent or invalid means 3 |
 
 ---
 
 ## 6. Change log
 
 Newest first. Add an entry for every change to stored data, including the result of the audit.
+
+### 2026-11-08 — background auto-download and pruning (`keith/next-native-release`)
+
+The stored-data change is additive, but this release **changes the native runtime**:
+`version` goes from 1.0.3 to 1.0.4. The reason is native code, not data. The JS imports
+`expo-background-task` and `expo-task-manager`, which a 1.0.3 binary does not contain, so
+this JS must never reach a 1.0.3 binary as an OTA update. Ship it in a store build.
+
+- New keys `autoDownloadedEpisodes`, `autoPrunePhone`, `autoPruneWatch`,
+  `autoPruneKeepCount`. No existing key or type changed.
+- `removeFromDownloads` and `removeFromWatchList` now also drop the episode's mark. A mark
+  left behind is harmless: pruning drops marks whose episode is no longer present before it
+  decides anything.
+- A background run writes `downloads`, `watchList`, `episodes:<podcastId>`,
+  `feedMeta:<podcastId>` and `autoDownload:<podcastId>` through the existing functions, in
+  the existing shapes.
+- The app entry moved from `expo-router/entry` to `apps/mobile/index.ts`, which defines the
+  background task and then loads `expo-router/entry`.
 
 ### 2026-09-26 — auto-download (`keith/auto-download`)
 

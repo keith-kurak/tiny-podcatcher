@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { ObserveRoot } from 'expo-observe';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -13,12 +13,14 @@ import { useFeedAutoRefresh } from '@/hooks/use-feed-auto-refresh';
 import { getConnectedNodes } from '@/hooks/useWearDataLayer';
 import { AudioProvider } from '@/lib/audio-context';
 import { useAutoDownload } from '@/lib/auto-download';
+import { syncBackgroundRefreshRegistration } from '@/lib/background-task-registration';
 import { DownloadProvider } from '@/lib/download-context';
 import {
   configureObserve,
   logAppStarted,
   logWatchConnectionChecked,
 } from '@/lib/observe';
+import { queryClient } from '@/lib/query-client';
 import { getOnboardingSeen, setOnboardingSeen } from '@/lib/storage';
 import { WatchStatusProvider } from '@/lib/watch-status-context';
 
@@ -32,13 +34,6 @@ function AutoDownloadRunner() {
   return null;
 }
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 5 * 60 * 1000,
-    },
-  },
-});
 
 function RootLayout() {
   const colorScheme = useColorScheme();
@@ -59,6 +54,9 @@ function RootLayout() {
 
   useEffect(() => {
     logAppStarted();
+    // Registration lives in the OS, and an install restored from backup, or a podcast
+    // whose auto-download was set by an older build, can leave it out of step.
+    void syncBackgroundRefreshRegistration();
     // Once per launch, as asked. Reported whether or not a watch answers: "no watch
     // paired" is the interesting half of this signal, and an event that only exists on
     // success cannot tell the difference between absent and broken.
